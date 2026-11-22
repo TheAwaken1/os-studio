@@ -22,6 +22,20 @@ Create walks you through five steps. Only the step you are on is open; the ones 
 
 Finished songs are kept in **Listen** with timed lyrics and downloads. Voice-converted songs keep the original AI-singer version too; switch versions in the player.
 
+### Covers (SheetSage2)
+**Cover a song** in step 1 makes a new version of a song that follows its melody, in any style and with any singer, including your own trained voice.
+
+1. Choose a song file (MP3, WAV, FLAC, OGG, M4A, AAC or Opus) or one of your songs, and how to get the lyrics:
+   - **Write down its lyrics:** the vocals are separated and Whisper writes the words down by ear. This adds about 2 minutes, and the words need checking (it misheard "Shih Tzu" in testing).
+   - **Keep its lyrics:** for your own songs, which already know their words.
+   - **I'll write new lyrics:** step 2 gets the song's sections to fill. **Write lyrics** follows that shape.
+2. **Listen to the song.** SheetSage2 listens once and writes down the melody, chords, key, tempo and sections as a score: about 10 seconds for a 2-minute song, under 2 GB of graphics memory. The lyrics land in step 2, sorted into the song's sections, and a banner shows what is being covered.
+3. Pick any sound and singer and make the song as usual. Takes, Remix, instrumentals and your own voice all work with covers.
+
+The banner chooses what the cover keeps: **Melody** (the default, recommended by SheetSage2's authors; the band plays its own chords) or **Melody + chords**. **Stop covering** goes back to a normal song. In testing, a cover in a different genre kept the original's key, tempo and length (96.5 s against 96 s) and matched 0.69 of its melody, against 0.26 for the same lyrics without the score. Covers always use YuE2; ACE-Step can't follow a score.
+
+Analyses are kept in `app/input/covers/` (git-ignored) and listed under **Analysed before** in the cover dialog, so a song only has to be listened to once; the × there deletes one. Deleting an analysis never deletes your songs. **Covers of other people's songs are for personal use unless you have the rights to them.**
+
 ### Instrumentals, music only and vocals only
 - **Make an instrumental:** press **Instrumental (no lyrics)** in step 1, or pick **No vocals (instrumental)** in step 4. Lyrics are not needed: the guide goes straight to the sound, and steps 1 and 2 show **Skip to the sound**. Anything typed in step 1 becomes the title (e.g. "late night rain" → "Late Night Rain"). YuE2 always sings something (with blank lyrics it makes up its own words), so the app renders the track and then takes the vocals out with the same separator the voice cloning uses. The result is music only, a few seconds slower than a normal song. Your lyrics and singer choice stay saved; **Add vocals back** switches it off.
 - **Split any song:** **Music & vocals** in the player saves the song's music and its vocals as two extra versions (a few seconds, about a minute the first time while the separator loads). Switch between **Full song**, **Music only** and **Vocals only** at the top of the player; the MP3 button downloads the one you are on, and the timed lyrics keep running, so Music only works as karaoke.
@@ -105,6 +119,7 @@ Models download automatically; nothing has to be fetched by hand.
 - **Song model.** Install finishes by making sure the song model is on disk: the full YuE2-3B + YuE2-Vae (about 7.8 GB, from `m-a-p` on Hugging Face) on 12 GB+ cards, or the single-file INT8 model (about 4 GB) on smaller cards. If it is still missing when you make a song, it downloads then. **Download missing song models** in the Pinokio menu does the same on demand.
 - **ACE-Step 1.5 XL (experimental)** is a second song engine, picked in step 3's *Song model* list. **It doesn't come out as good as YuE2** (the vocals sound noticeably lower quality), so YuE2 stays the default: Auto never picks ACE-Step, and the app goes back to Auto each time it opens. It reuses ComfyUI's `diffusion_models/ace-step1.5`, `text_encoders/ace-step1.5` and `vae/ace-step1.5` files if your models folder has them, otherwise the first ACE song downloads about 20 GB from `Comfy-Org/ace_step_1.5_ComfyUI_files`. It runs the same settings as ComfyUI's ACE-Step 1.5 XL SFT workflow (50 steps, cfg 7, euler/simple, shift 3); the song length comes from your lyrics and the BPM from your style text (`110 BPM`), otherwise 120. Timed lyrics and your trained voices work with it unchanged. Melody planning is YuE2-only. Picking ACE-Step swaps the style presets and style library to versions written for it (`app/style_prompts_ace.txt`; YuE2's are in `app/style_prompts.txt`); a chosen preset follows the switch by name, and a style you typed yourself is left alone. A key in the style text (`E minor`) and a time signature (`6/8`) are passed to ACE as song settings.
 - **Lyrics writers, voice models and lyric timing** download the first time you use them.
+- **Covers** download two models the first time: SheetSage2 (`audio_encoders/sheetsage2_bf16.safetensors`, 1.4 GB, from `Comfy-Org/YuE2`, reused if your models folder has it) and, only if you ask it to write lyrics down, Whisper large-v3 turbo (about 1.6 GB, from `openai/whisper-large-v3-turbo`, kept in the Hugging Face cache).
 - Seed-VC's sample clips, which voice training mixes in as "other voices", are fetched from the pinned upstream Seed-VC commit on first training instead of being shipped here.
 - FFmpeg is installed with Conda if it is missing.
 
@@ -112,7 +127,7 @@ Models download automatically; nothing has to be fetched by hand.
 OS Studio is released under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). It bundles GPLv3 code (Seed-VC and parts of ComfyUI), so changes you share must stay GPLv3 as well. The license covers this code only, not the model weights below.
 
 ## Third-party licensing — before sharing
-The YuE2 checkpoint weights are **CC BY-NC 4.0** (see `YuE2-3B/LICENSE`): no commercial use. Vendored Seed-VC is GPLv3 and the vendored ComfyUI core carries GPLv3-or-later notices; original notices are preserved. This repository does not relicense those components or authorize commercial use of the weights.
+The YuE2 checkpoint weights are **CC BY-NC 4.0** (see `YuE2-3B/LICENSE`): no commercial use. The SheetSage2 weights used for covers (`m-a-p/SheetSage2`) are also **CC BY-NC 4.0**. Whisper is MIT-licensed. Vendored Seed-VC is GPLv3 and the vendored ComfyUI core carries GPLv3-or-later notices; original notices are preserved. This repository does not relicense those components or authorize commercial use of the weights.
 
 ## Updates
 **Update** in the Pinokio menu runs `git pull` on this launcher and then re-runs Install, which picks up new dependencies and any missing models. Songs, voices, models and `app/config.json` are git-ignored, so updates never touch them.
@@ -182,6 +197,16 @@ curl http://127.0.0.1:YOUR_PORT/api/styles
 Style endpoints: `GET /api/styles` returns `engine_styles` (`yue2` and `ace15`, each with `presets`, `style_library` and `hidden_count`). The save, delete and restore calls return the same thing. `POST /api/styles/restore` takes an optional `name` to bring back a single style. `POST /api/style-ai` takes `idea` (up to 400 characters), `engine` (`yue2` or `ace15`) and an optional `writer`.
 
 `POST /api/lyrics-plan` returns per-section `counts`, `total_lines`, `estimated_seconds`, `target_seconds`, and `limit_seconds`. Send an integer `target_seconds` from 30 to 360, or null/omit it for Auto, plus `memory` (`auto`, `low`, or `standard`). Over-limit targets are rejected; an estimate is not a promised final song duration. The same optional target/memory fields are accepted by `POST /api/lyrics` when starting a draft.
+
+Covers: `POST /api/covers?name=Song&lyrics=transcribe` with the audio file as the raw body (header `X-Filename: song.mp3`) starts an analysis job; `lyrics` is `transcribe` or `none`. `POST /api/covers/song/{id}?lyrics=song` analyses one of your songs (`song` reuses its lyrics). The job result's `cover` has `id`, `key`, `bpm`, `meter`, `sections` (tag, start, end, sung, lines) and `lyrics`. `GET /api/covers` lists analyses; `DELETE /api/covers/{id}` forgets one. Then `POST /api/song` with `"cover_id": "<id>"` and `"cover_follow": "melody"` (or `"full"` for melody + chords) makes the cover.
+
+```sh
+curl -X POST "http://127.0.0.1:YOUR_PORT/api/covers?name=My%20Song&lyrics=transcribe" \
+  -H "X-Filename: my-song.mp3" -H "Content-Type: application/octet-stream" --data-binary @my-song.mp3
+# poll /api/job until done, then:
+curl -X POST http://127.0.0.1:YOUR_PORT/api/song -H "Content-Type: application/json" \
+  -d '{"lyrics":"[verse]\n...","style":"English, country, acoustic guitar, warm male vocal","cover_id":"COVER_ID"}'
+```
 
 Instrumentals and splits: `POST /api/song` with `"instrumental": true` makes a music-only song (lyrics may be empty). `POST /api/songs/{id}/split` starts a GPU job that saves the song's music and vocals (poll `/api/job`; it returns `job: null` if both already exist). `GET /media/{id}?v=inst` and `?v=vocals` play them (`?v=ai` is the AI singer of a voice-cloned song); `GET /api/songs` reports `has_inst`, `has_vocals`, `has_score` and `instrumental` per song.
 

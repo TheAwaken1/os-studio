@@ -15,6 +15,7 @@ node graph.
 | Song | YuE2-3B — the full model, or the small INT8 single file (pick in step 3; Auto chooses by graphics card) |
 | Lyric timing | SongLRC + WhisperX word alignment |
 | Voice clone | Seed-VC + Hybrid Demucs (train once from a talking clip) |
+| Covers | SheetSage2 (song → melody/chord score) + Whisper large-v3 turbo (writing lyrics down) |
 
 ## Requirements
 
@@ -74,6 +75,11 @@ environment otherwise.
    it finishes. When the first is done it loads into the player with synced
    lyrics — click any line to jump there. Songs sung in your voice keep the
    AI-singer version too; switch between them in the player.
+
+**Cover a song** (step 1) listens to a song file or one of your songs with
+SheetSage2, and your version follows its melody in any style and voice. It can
+write the original lyrics down too (Whisper; check them). SheetSage2's weights
+are non-commercial (CC BY-NC 4.0); cover other people's songs for personal use only.
 
 **Music & vocals** in the player splits any song into *Music only* and *Vocals
 only* versions (a few seconds); voice-cloned songs get them automatically.

@@ -150,6 +150,7 @@ def describe(mp3_path: str) -> dict:
         "lyrics": meta.get("lyrics") or "",
         "took": meta.get("took"),
         "cut_short": bool(meta.get("cut_short")),
+        "cover": meta.get("cover") if isinstance(meta.get("cover"), dict) else None,
     }
 
 
@@ -1090,3 +1091,157 @@ def model_check() -> list[dict]:
         {"name": "YuE2-Vae (audio decoder)", "path": os.path.join(yue2, "YuE2-Vae"),
          "ok": os.path.isfile(os.path.join(yue2, "YuE2-Vae", "model.safetensors")), "required": True},
     ]
+
+
+# ------------------------------------------------------------------ covers (SheetSage2 scores)
+def score_has_chords(abc: str) -> bool:
+    """A chord-annotated score ("Em" symbols) needs full planning; a bare melody uses melody."""
+    return bool(re.search(r'"[A-G][^"]*"', abc or ""))
+
+
+COVERS_DIR = os.path.join(os.path.abspath(CFG["input_dir"]), "covers")
+SHEETSAGE_FILE = "sheetsage2_bf16.safetensors"          # Comfy-Org/YuE2 audio_encoders/, 1.4 GB, CC BY-NC 4.0
+SHEETSAGE_REPO = INT8_REPO
+COVER_AUDIO = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus")
+# SheetSage2 section names -> the lyric tags YuE2 knows (SheetSage2 node's own aliases).
+_COVER_TAGS = {"silence": "intro", "instrumental": "interlude", "solo": "interlude", "fade-out": "outro",
+               "pre-outro": "outro", "intro and verse": "verse", "verse and pre-chorus": "verse",
+               "pre-chorus and chorus": "chorus", "post-chorus": "chorus", "rap": "verse", "theme": "verse",
+               "loop": "interlude", "preshot": "intro"}
+
+
+def sheetsage_path() -> str:
+    return os.path.join(MODELS_DIR, "audio_encoders", SHEETSAGE_FILE)
+
+
+def download_sheetsage() -> None:
+    """The song-listening model for covers (1.4 GB, once)."""
+    if os.path.isfile(sheetsage_path()):
+        return
+    from huggingface_hub import hf_hub_download
+    hf_hub_download(SHEETSAGE_REPO, f"audio_encoders/{SHEETSAGE_FILE}", local_dir=MODELS_DIR)
+
+
+def cover_tag(name: str) -> str:
+    name = re.sub(r"\s+", " ", str(name or "").strip().lower())
+    return _COVER_TAGS.get(name, name or "verse")
+
+
+def _abc_header(abc: str, field: str) -> str:
+    match = re.search(rf"^{field}:\s*(.+)$", abc or "", re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def score_summary(abc: str) -> dict:
+    """Key, tempo and the section list of a SheetSage2 score, with how many lyric lines
+    each sung section holds (its sung bars at the score's tempo, ~3.9 s per line)."""
+    key, meter, tempo = _abc_header(abc, "K"), _abc_header(abc, "M"), _abc_header(abc, "Q")
+    bpm = int(re.search(r"=\s*(\d+)", tempo).group(1)) if re.search(r"=\s*(\d+)", tempo) else 0
+    beats, unit = 4, 4
+    if re.fullmatch(r"\d+/\d+", meter):
+        beats, unit = (int(x) for x in meter.split("/"))
+    bar_seconds = (beats * 4 / unit) * 60.0 / bpm if bpm else 2.0
+    sections, voice = [], None
+    for line in (abc or "").splitlines():
+        if line.startswith("% "):
+            sections.append({"name": line[2:].strip(), "tag": cover_tag(line[2:]), "sung_bars": 0})
+        elif line.startswith("V:"):
+            voice = line.split()[1] if len(line.split()) > 1 else None
+        elif sections and voice == "Vocal" and not re.match(r"^[A-Za-z]:", line):
+            bars = re.sub(r'"[^"]*"', "", line).split("|")
+            sections[-1]["sung_bars"] += sum(1 for bar in bars if re.search(r"[A-Ga-g]", bar))
+    for section in sections:
+        bars = section.pop("sung_bars")
+        section["sung"] = bars > 0
+        section["lines"] = max(1, min(16, round(bars * bar_seconds / SECONDS_PER_LINE))) if bars else 0
+    return {"key": key, "bpm": bpm, "meter": meter, "sections": sections}
+
+
+def cover_lyrics(sections: list[dict], timed_lines=None) -> str:
+    """Section tags in the score's order, filled with transcribed lines by time when given.
+    sections: [{tag, start, end}], timed_lines: [(seconds, text)]."""
+    timed = sorted((float(t), str(text).strip()) for t, text in (timed_lines or []) if str(text).strip())
+    blocks = []
+    for i, section in enumerate(sections):
+        start = float(section.get("start", 0))
+        end = float(section.get("end", 0)) if i < len(sections) - 1 else float("inf")
+        lines = [text for t, text in timed if start <= t < end]
+        if i == 0:
+            lines = [text for t, text in timed if t < end]     # nothing before the first section is lost
+        blocks.append("\n".join([f"[{section['tag']}]"] + lines))
+    return "\n\n".join(blocks).strip() + "\n"
+
+
+def cover_id(name: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9]+", "-", str(name or "song")).strip("-")[:40] or "song"
+    return f"{time.strftime('%Y%m%d-%H%M%S')}-{stem}"
+
+
+def _cover_file(cid: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,80}", cid or ""):
+        raise FileNotFoundError(cid)
+    return os.path.join(COVERS_DIR, cid + ".json")
+
+
+def save_cover(info: dict) -> dict:
+    os.makedirs(COVERS_DIR, exist_ok=True)
+    with open(_cover_file(info["id"]), "w", encoding="utf-8") as fh:
+        json.dump(info, fh, ensure_ascii=False, indent=1)
+    return cover_brief(info)
+
+
+def get_cover(cid: str) -> dict:
+    with open(_cover_file(cid), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def cover_brief(info: dict) -> dict:
+    """What the page needs (the scores stay on the server)."""
+    return {k: info.get(k) for k in ("id", "name", "duration", "key", "bpm", "meter", "sections",
+                                    "lyrics", "lyrics_source", "created", "song_id")}
+
+
+def list_covers() -> list[dict]:
+    out = []
+    if os.path.isdir(COVERS_DIR):
+        for name in os.listdir(COVERS_DIR):
+            if name.endswith(".json"):
+                try:
+                    out.append(cover_brief(get_cover(name[:-5])))
+                except (OSError, ValueError, FileNotFoundError):
+                    continue
+    return sorted(out, key=lambda c: c.get("created") or 0, reverse=True)
+
+
+def delete_cover(cid: str) -> None:
+    info = get_cover(cid)
+    for path in (_cover_file(cid), info.get("audio") or ""):
+        if path and os.path.commonpath([COVERS_DIR, os.path.abspath(path)]) == COVERS_DIR:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+
+def group_words(words, min_words: int = 4, comma_words: int = 6, max_words: int = 9) -> list:
+    """Whisper word timings [(start, end, word)] -> lyric lines [(end_seconds, line)].
+    A line breaks before a capitalised word (Whisper capitalises sung line starts), after a
+    comma or full stop once the line is long enough, at 9 words, or at a pause. Lines are
+    placed by when they END: the first word's start time is often wrong."""
+    lines, cur = [], []
+    for start, end, text in words:
+        text = str(text or "").strip()
+        if start is None or not text:
+            continue
+        end = end if end is not None else start + 0.3
+        if cur:
+            prev = cur[-1][2]
+            if ((text[0].isupper() and len(cur) >= min_words) or (prev.endswith(",") and len(cur) >= comma_words)
+                    or (prev.endswith((".", "?", "!")) and len(cur) >= 3) or len(cur) >= max_words
+                    or start - cur[-1][1] >= 1.5):
+                lines.append(cur)
+                cur = []
+        cur.append((float(start), float(end), text))
+    if cur:
+        lines.append(cur)
+    return [(line[-1][1], " ".join(w[2] for w in line).strip(" ,")) for line in lines]

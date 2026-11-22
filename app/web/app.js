@@ -32,7 +32,7 @@
     presets: [], styleLibrary: [], styleSets: {}, styleEngine: "yue2", voices: [], singers: [], singer: "", singerOwn: false, songs: [], writers: [], writer: "", defaultWriter: "",
     songModels: [], songModel: "auto", autoSongModel: "",
     sections: [], structure: [], lines: 4, secondsPerLine: 3.9, engine: "starting",
-    job: null, handledJob: 0, logSeq: 0, startedJobs: new Set(), takes: 1, takeRun: null, instrumental: false,   // jobs this page started (only it autoplays them)
+    job: null, handledJob: 0, logSeq: 0, startedJobs: new Set(), takes: 1, takeRun: null, instrumental: false, cover: null, coverFile: null,   // jobs this page started (only it autoplays them)
     current: null, version: "", lrc: null, undo: null,
   };
   const audio = $("audio");
@@ -120,7 +120,7 @@
                     structure: state.structure, lines: state.lines,
                     guide: guide.core ? guide.core.toJSON() : null, remix: guide.remix,
                     done: Boolean(state.draftDone), writtenKey: state.writtenKey ?? null,
-                    instrumental: Boolean(state.instrumental) };
+                    instrumental: Boolean(state.instrumental), cover: state.cover || null };
     FIELDS.forEach((f) => { draft[f] = $(f).value; });
     localStorage.setItem("yss.draft", JSON.stringify(draft));
   }
@@ -131,6 +131,7 @@
     if (!["auto", "60", "120", "180", "custom"].includes($("targetLength").value)) $("targetLength").value = "auto";
     state.voice = draft.voice || "";
     state.instrumental = Boolean(draft.instrumental);
+    state.cover = draft.cover && draft.cover.id ? draft.cover : null;
     state.singer = typeof draft.singer === "string" ? draft.singer : "";
     state.singerOwn = Boolean(draft.singerOwn);
     $("singerCustom").value = draft.singerCustom || "";
@@ -265,6 +266,7 @@
     $("idea").value = ""; $("title").value = ""; $("seed").value = "";
     guide.remix = null; guide.made = null;
     state.instrumental = false; renderVocals();
+    state.cover = null; renderCover();
     if (guide.core) guide.core.restart();
     setLyrics("");
     saveDraft(); renderGuide();
@@ -666,6 +668,8 @@
     $("voiceProgress").hidden = kind !== "voice";
     $("voiceTrain").disabled = running;
     $("btnSplit").disabled = running;
+    $("coverGo").disabled = running;
+    $("coverProgress").hidden = kind !== "cover";
     $("btnSplit").classList.toggle("busy", kind === "split");
     if (kind !== "split") $("btnSplit").lastElementChild.textContent = "Music & vocals";
     const pill = $("enginePill");
@@ -673,7 +677,7 @@
       pill.dataset.state = "error"; pill.lastElementChild.textContent = "Engine failed to start";
     } else if (running) {
       pill.dataset.state = "busy";
-      pill.lastElementChild.textContent = { song: "Making a song", lyrics: "Writing lyrics", voice: "Learning a voice", style: "Making a style", split: "Splitting a song" }[kind];
+      pill.lastElementChild.textContent = { song: "Making a song", lyrics: "Writing lyrics", voice: "Learning a voice", style: "Making a style", split: "Splitting a song", cover: "Listening to a song" }[kind];
     } else if (state.engine === "ready") {
       pill.dataset.state = "ready"; pill.lastElementChild.textContent = "Ready";
     } else {
@@ -705,6 +709,11 @@
       $("vpBar").style.width = pct;
     } else if (job.kind === "split") {
       $("btnSplit").lastElementChild.textContent = `Splitting… ${pct}`;
+    } else if (job.kind === "cover") {
+      $("cpLabel").textContent = prog.label || "Working…";
+      $("cpPct").textContent = pct;
+      $("cpTime").textContent = clock(job.elapsed);
+      $("cpBar").style.width = pct;
     } else if (job.kind === "style") {
       $("styleAIHint").textContent = `${prog.label || "Starting"}… ${clock(job.elapsed)}`;
     } else if (job.kind === "lyrics") {
@@ -725,6 +734,7 @@
     if (job.state === "error") {
       toast(job.error || "That didn't work.", "error", { label: "Details", run: () => openDrawer(true) });
       if (job.kind === "voice") { $("voiceError").textContent = job.error; $("voiceError").hidden = false; }
+      if (job.kind === "cover") { $("coverError").textContent = job.error; $("coverError").hidden = false; }
       if (job.kind === "lyrics" && state.lyricsBefore != null) setLyrics(state.lyricsBefore, false);
       return;
     }
@@ -770,6 +780,11 @@
       } else {
         if (run && run.total > 1) toast(`All ${run.total} takes are ready in your songs.`, "ok", { label: "Listen", run: () => listenTo(song) });
         state.takeRun = null; renderTakes();
+      }
+    } else if (job.kind === "cover") {
+      if (state.startedJobs.has(job.id)) {
+        $("coverDlg").close();
+        applyCover(job.result.cover);
       }
     } else if (job.kind === "split") {
       await refreshSongs();
@@ -899,6 +914,7 @@
       title: $("title").value.trim() || (instrumental      // "late night rain" -> "Late Night Rain"
         ? brief($("idea").value, 60).replace(/…$/, "").replace(/(^|\s)(\S)/g, (m, sp, c) => sp + c.toUpperCase()) : ""),
       memory: $("memory").value || "auto", model: state.songModel || "auto", instrumental,
+      cover_id: state.cover ? state.cover.id : "", cover_follow: state.cover ? state.cover.follow || "melody" : "melody",
     } };
     if (await startTake()) {
       $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -930,6 +946,145 @@
     $("takesHint").textContent = n > 1
       ? `${n} new performances of the same song, one after another (${n}× the time of one song). Each is saved as it finishes; Cancel stops the rest.`
       : "Each take is a new performance of the same song: same lyrics, style and singer.";
+  }
+
+  /* ------------------------------------------------------------ covers */
+  function coverLyricsChoice() {
+    const hit = document.querySelector('input[name="coverLyrics"]:checked');
+    return hit ? hit.value : "transcribe";
+  }
+  function setCoverLyricsChoice(value) {
+    document.querySelectorAll('input[name="coverLyrics"]').forEach((r) => { r.checked = r.value === value; });
+  }
+
+  async function openCoverDialog() {
+    state.coverFile = null;
+    $("coverFile").value = "";
+    $("coverDrop").classList.remove("has");
+    $("coverDropText").textContent = "Choose a song file, or drop it here";
+    $("coverName").value = "";
+    $("coverError").hidden = true;
+    const pick = $("coverSong");
+    pick.replaceChildren(el("option", null, "Pick a song…"));
+    pick.firstElementChild.value = "";
+    state.songs.filter((s) => !s.instrumental).forEach((s) => {
+      const o = el("option", null, s.title); o.value = s.id; pick.append(o);
+    });
+    $("coverKeepRow").hidden = true;
+    setCoverLyricsChoice("transcribe");
+    $("coverDlg").showModal();
+    try { renderCoverRecent((await api("/api/covers")).covers); } catch (_) { $("coverRecent").hidden = true; }
+  }
+
+  function renderCoverRecent(covers) {
+    const list = $("coverRecentList");
+    list.replaceChildren(...covers.slice(0, 12).map((c) => {
+      const li = el("li");
+      li.append(el("span", null, `${c.name} · ${c.key || "?"} · ${c.bpm || "?"} BPM`));
+      const use = el("button", "btn small", "Use");
+      use.type = "button";
+      use.onclick = () => { $("coverDlg").close(); applyCover(c); };
+      const del = el("button", "icon-btn small");
+      del.type = "button"; del.innerHTML = ICON.close;
+      del.title = `Forget the analysis of "${c.name}"`; del.setAttribute("aria-label", del.title);
+      del.onclick = async () => {
+        try { await api("/api/covers/" + c.id, { method: "DELETE" }); li.remove(); if (!list.children.length) $("coverRecent").hidden = true; }
+        catch (err) { toast(err.message, "error"); }
+      };
+      li.append(use, del);
+      return li;
+    }));
+    $("coverRecent").hidden = !covers.length;
+  }
+
+  function pickCoverFile(file) {
+    if (!file) return;
+    state.coverFile = file;
+    $("coverSong").value = "";
+    $("coverDrop").classList.add("has");
+    $("coverDropText").textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB`;
+    if (!$("coverName").value.trim()) $("coverName").value = file.name.replace(/\.[^.]+$/, "").slice(0, 80);
+    $("coverKeepRow").hidden = true;
+    if (coverLyricsChoice() === "song") setCoverLyricsChoice("transcribe");
+  }
+
+  function pickCoverSong() {
+    const song = state.songs.find((s) => s.id === $("coverSong").value);
+    if (!song) { $("coverKeepRow").hidden = true; return; }
+    state.coverFile = null;
+    $("coverFile").value = "";
+    $("coverDrop").classList.remove("has");
+    $("coverDropText").textContent = "Choose a song file, or drop it here";
+    $("coverName").value = song.title;
+    $("coverKeepRow").hidden = !song.lyrics;
+    setCoverLyricsChoice(song.lyrics ? "song" : "transcribe");
+  }
+
+  async function startCover() {
+    const error = (msg) => { $("coverError").textContent = msg; $("coverError").hidden = false; };
+    $("coverError").hidden = true;
+    if (busy()) return error("Wait for the current job to finish first.");
+    const lyrics = coverLyricsChoice(), songId = $("coverSong").value;
+    let path, opts;
+    if (state.coverFile) {
+      const name = $("coverName").value.trim() || state.coverFile.name.replace(/\.[^.]+$/, "");
+      path = `/api/covers?name=${encodeURIComponent(name)}&lyrics=${encodeURIComponent(lyrics === "song" ? "transcribe" : lyrics)}`;
+      opts = { method: "POST", raw: state.coverFile,
+               headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(state.coverFile.name) } };
+    } else if (songId) {
+      path = `/api/covers/song/${songId}?lyrics=${encodeURIComponent(lyrics)}`;
+      opts = { body: {} };
+    } else return error("Choose a song file or one of your songs first.");
+    if (await startJob(path, opts, "cover")) $("coverProgress").hidden = false;
+  }
+
+  // The analysis is ready: its lyrics go to step 2, its sections become the song shape.
+  function applyCover(c) {
+    if (!c) return;
+    state.cover = { id: c.id, name: c.name, key: c.key, bpm: c.bpm, sections: c.sections || [],
+                    follow: (state.cover && state.cover.follow) || "melody" };
+    if (c.lyrics) setLyrics(c.lyrics);
+    const sung = (c.sections || []).filter((s) => s.sung && state.sections.includes(s.tag));
+    if (sung.length) {
+      state.structure = sung.map((s) => s.tag);
+      const counts = sung.map((s) => s.lines).filter(Boolean).sort((a, b) => a - b);
+      if (counts.length) state.lines = counts[Math.floor(counts.length / 2)];
+      renderShape();
+    }
+    if (!$("title").value.trim()) $("title").value = `${c.name} (cover)`;
+    if (state.instrumental) setInstrumental(false);
+    renderCover(); saveDraft();
+    if (guide.ready && guide.core) {
+      guide.core.ownLyrics = true;
+      guide.core.reached = Math.max(guide.core.reached, 1);
+      goStep(1);
+    }
+    const note = c.lyrics_source === "transcribed" ? "Its lyrics were written down by ear, so check them in step 2."
+      : c.lyrics_source === "song" ? "Its lyrics are in step 2." : "Step 2 has its sections: write new lyrics, or press Write lyrics.";
+    toast(`Covering “${c.name}” (${c.key || "?"}, ${c.bpm || "?"} BPM). ${note} Then pick any sound and singer.`, "ok");
+  }
+
+  function renderCover() {
+    const c = state.cover;
+    $("coverBanner").hidden = !c;
+    $("composer").dataset.cover = String(Boolean(c));
+    if (!c) return;
+    const bits = [c.key, c.bpm ? `${c.bpm} BPM` : "", c.sections && c.sections.length ? `${c.sections.length} sections` : ""].filter(Boolean);
+    $("coverText").textContent = `Cover of “${c.name}”${bits.length ? " · " + bits.join(" · ") : ""}. The melody follows the original; the sound and singer are yours.`;
+    document.querySelectorAll("#coverFollow [data-follow]").forEach((b) => {
+      const on = b.dataset.follow === (c.follow || "melody");
+      b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on));
+    });
+  }
+
+  async function refreshCoverInfo() {
+    try {
+      const found = (await api("/api/covers")).covers.find((c) => state.cover && c.id === state.cover.id);
+      if (!state.cover) return;
+      if (!found) { toast(`The analysis of “${state.cover.name}” was deleted, so this can't be a cover. Analyse the song again.`, "error"); state.cover = null; }
+      else Object.assign(state.cover, { key: found.key, bpm: found.bpm, sections: found.sections });
+      renderCover(); saveDraft();
+    } catch (_) { /* the banner keeps what it has */ }
   }
 
   function renderVocals() {
@@ -1083,6 +1238,8 @@
     if (song.cot) $("cot").value = song.cot;
     state.voice = song.voice && state.voices.some((v) => v.name === song.voice) ? song.voice : "";
     state.instrumental = Boolean(song.instrumental); renderVocals();
+    state.cover = song.cover && song.cover.id ? { ...song.cover } : null; renderCover();
+    if (state.cover) refreshCoverInfo();
     const sung = song.singer || "";
     state.singerOwn = Boolean(sung) && !state.singers.some((p) => p.id === sung);
     state.singer = state.singerOwn ? "" : sung;
@@ -1458,7 +1615,7 @@
     state.pendingSeek = null;
     $("player").dataset.empty = "false";
     $("npTitle").textContent = song.title;
-    const bits = [styleName(song.style), song.instrumental ? "Instrumental" : song.voice ? "sung in " + song.voice : ((song.singer ? (state.singers.find((p) => p.id === song.singer) || { name: song.singer }).name + " " : "") + "AI singer"),
+    const bits = [song.cover ? `Cover of ${song.cover.name}` : "", styleName(song.style), song.instrumental ? "Instrumental" : song.voice ? "sung in " + song.voice : ((song.singer ? (state.singers.find((p) => p.id === song.singer) || { name: song.singer }).name + " " : "") + "AI singer"),
                   clock(song.duration), when(song.created)].filter(Boolean);
     $("npSub").textContent = bits.join(" · ");
     renderVersions(song);
@@ -2208,6 +2365,23 @@
     document.querySelectorAll("#takesSeg [data-takes]").forEach((b) => { b.onclick = () => setTakes(b.dataset.takes); });
     document.querySelectorAll("[data-vocals]").forEach((b) => { b.onclick = () => setInstrumental(b.dataset.vocals === "off"); });
     $("btnInstrumental").onclick = () => { setInstrumental(true); skipToSound(); };
+    $("btnCover").onclick = openCoverDialog;
+    $("coverStop").onclick = () => { state.cover = null; renderCover(); saveDraft(); toast("Not covering any more. The lyrics stay as they are."); };
+    document.querySelectorAll("#coverFollow [data-follow]").forEach((b) => {
+      b.onclick = () => { if (state.cover) { state.cover.follow = b.dataset.follow; renderCover(); saveDraft(); } };
+    });
+    $("coverFile").addEventListener("change", () => pickCoverFile($("coverFile").files[0]));
+    const coverDrop = $("coverDrop");
+    ["dragenter", "dragover"].forEach((n) => coverDrop.addEventListener(n, (ev) => { ev.preventDefault(); coverDrop.classList.add("over"); }));
+    ["dragleave", "drop"].forEach((n) => coverDrop.addEventListener(n, (ev) => { ev.preventDefault(); coverDrop.classList.remove("over"); }));
+    coverDrop.addEventListener("drop", (ev) => pickCoverFile(ev.dataTransfer.files[0]));
+    $("coverSong").addEventListener("change", pickCoverSong);
+    $("coverGo").onclick = startCover;
+    $("coverCancel").onclick = () => {
+      if (busy() && state.job.kind === "cover") api("/api/cancel", { method: "POST" }).catch(() => {});
+      $("coverDlg").close();
+    };
+    renderCover();
     document.querySelectorAll("[data-skip-sound]").forEach((b) => { b.onclick = skipToSound; });
     $("btnSplit").onclick = async () => {
       const song = state.current;

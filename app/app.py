@@ -275,6 +275,8 @@ class SongBody(BaseModel):
     memory: str = "auto"
     model: str = "auto"
     instrumental: bool = False      # no vocals: lyrics are ignored
+    cover_id: str = ""              # follow the melody of an analysed song (POST /api/covers)
+    cover_follow: str = "melody"    # "melody" or "full" (melody + chords)
 
 
 def _gpu():
@@ -525,13 +527,87 @@ def api_song(body: SongBody):
         if not picked["installed"] and picked["id"] not in ("full", "ace15-xl", library.INT8_FILE):
             raise HTTPException(400, f"The song model '{picked['name']}' is not installed on this PC.")
 
+    score, cover = "", None
+    if body.cover_id:
+        if body.cover_follow not in ("melody", "full"):
+            raise HTTPException(400, "Covers follow the melody, or the melody and chords.")
+        try:
+            plan = library.get_cover(body.cover_id)
+        except (FileNotFoundError, OSError, ValueError):
+            raise HTTPException(404, "That cover is no longer on this PC. Analyse the song again.") from None
+        if body.model != "auto" and library.get_song_model(body.model).get("kind") == "ace15":
+            raise HTTPException(400, "Covers use YuE2: pick YuE2 (or Auto) as the song model in step 3.")
+        score = plan["full_abc"] if body.cover_follow == "full" else plan["melody_abc"]
+        cover = {"id": plan["id"], "name": plan["name"], "follow": body.cover_follow}
+
     def run(service, job):
         return {"song": service.make_song(
             lyrics=body.lyrics, style=body.style.strip(), seed=body.seed, cot=body.cot,
             voice=body.voice, title=body.title, idea=body.idea, memory=body.memory,
-            model=body.model, singer=body.singer, instrumental=body.instrumental)}
+            model=body.model, singer=body.singer, instrumental=body.instrumental,
+            score=score, cover=cover)}
 
     return _start("song", run)
+
+
+# ------------------------------------------------------------------ covers
+COVER_LYRICS = ("transcribe", "none")
+
+
+@app.get("/api/covers")
+def api_covers():
+    return {"covers": library.list_covers()}
+
+
+@app.post("/api/covers")
+async def api_cover_upload(request: Request, name: str = "", lyrics: str = "transcribe"):
+    """Upload a song (raw body, X-Filename header) and analyse it for a cover (a GPU job)."""
+    if lyrics not in COVER_LYRICS:
+        raise HTTPException(400, "lyrics must be 'transcribe' or 'none'.")
+    data = await request.body()
+    if len(data) < 50_000:
+        raise HTTPException(400, "That file is empty or too short to be a song.")
+    filename = request.headers.get("x-filename", "")
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in library.COVER_AUDIO:
+        raise HTTPException(400, "Use an audio file: MP3, WAV, FLAC, OGG, M4A, AAC or Opus.")
+    title = (name or os.path.splitext(os.path.basename(filename))[0] or "Song").strip()[:80]
+    os.makedirs(library.COVERS_DIR, exist_ok=True)
+    path = os.path.join(library.COVERS_DIR, library.cover_id(title) + ext)
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+    def run(service, job):
+        return {"cover": service.analyze_cover(path, title, lyrics=lyrics)}
+
+    return _start("cover", run)
+
+
+@app.post("/api/covers/song/{sid}")
+def api_cover_song(sid: str, lyrics: str = "song"):
+    """Cover one of your own songs. lyrics: "song" reuses its words, or transcribe / none."""
+    if lyrics not in COVER_LYRICS + ("song",):
+        raise HTTPException(400, "lyrics must be 'song', 'transcribe' or 'none'.")
+    try:
+        path = library.song_path(sid)
+        song = library.describe(path)
+    except FileNotFoundError:
+        raise HTTPException(404, "That song is no longer on disk.") from None
+    words = (song["lyrics"] or "none") if lyrics == "song" else lyrics
+
+    def run(service, job):
+        return {"cover": service.analyze_cover(path, song["title"], lyrics=words, song_id=sid)}
+
+    return _start("cover", run)
+
+
+@app.delete("/api/covers/{cid}")
+def api_delete_cover(cid: str):
+    try:
+        library.delete_cover(cid)
+    except (FileNotFoundError, OSError, ValueError):
+        raise HTTPException(404, "That cover is no longer on this PC.") from None
+    return {"ok": True}
 
 
 @app.post("/api/songs/{sid}/split")

@@ -274,6 +274,22 @@ label input, label select { font-weight: 400; color: var(--text); font-size: 14p
 .vocals-row { margin-bottom: 14px; }
 .vocals-seg button { height: 34px; font-size: 14px; }
 
+/* ------------------------------------------------------------ covers */
+.cover-banner { flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.cover-banner #coverText { flex: 1 1 260px; }
+.cover-banner .seg button { height: 30px; }
+#coverSong { width: 100%; }
+.cover-lyrics { border: 0; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; }
+.cover-lyrics legend { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+#coverDlg .cover-lyrics label.choice { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; margin: 0; }
+#coverDlg .cover-lyrics input[type=radio] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--amber); }
+#coverDlg .cover-lyrics .choice .hint { font-size: 12.5px; margin: 0; font-weight: 400; }
+#coverDlg .cover-lyrics .choice[hidden] { display: none; }
+.cover-recent ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; max-height: 150px; overflow: auto; }
+.cover-recent li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.cover-recent li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hint.small { font-size: 12px; }
+
 /* ------------------------------------------------------------ takes */
 .takes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
 .takes-label { font-weight: 600; font-size: 14px; }

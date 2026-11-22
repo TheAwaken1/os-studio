@@ -313,6 +313,8 @@ def _make_room(need_gb: float, keep: str):
     evictions = []
     if keep != "lyrics":
         evictions.append(_drop_lyrics_model)
+    if keep != "cover":
+        evictions.append(_drop_sheetsage)
     if keep != "voice":
         evictions.append(_park_voice_models)
     evictions.append(lambda: (mm.unload_all_models(), mm.soft_empty_cache()))
@@ -557,7 +559,7 @@ def native_load(checkpoint: str) -> dict:
 
 
 def native_generate(pipe: dict, style: str, lyrics: str, seed: int, max_seconds: float = 360.0,
-                    cot: str = "off", on_stage=None):
+                    cot: str = "off", on_stage=None, score: str = ""):
     """style + lyrics -> (AUDIO dict, abc score, info string) with a single-file checkpoint."""
     import comfy.model_management as mm
     import comfy.sample
@@ -565,8 +567,8 @@ def native_generate(pipe: dict, style: str, lyrics: str, seed: int, max_seconds:
     from comfy.text_encoders.yue2 import FRAMES_PER_SECOND
 
     clip, model, vae = pipe["clip"], pipe["model"], pipe["vae"]
-    abc = ""
-    if cot in ("melody", "full"):                  # plan the melody first
+    abc = (score or "").strip()                   # a cover follows a given score instead of planning one
+    if not abc and cot in ("melody", "full"):      # plan the melody first
         plan = clip.tokenize(style, lyrics=lyrics, cot=cot, seed=seed,
                              max_tokens=4096, penalty_window=100)
         abc = clip.decode(clip.generate(plan, max_length=4096, temperature=0.7, top_p=0.9,
@@ -717,7 +719,8 @@ def _seconds(audio) -> float:
 
 def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
               voice: str = "", title: str = "", idea: str = "", memory: str = "auto",
-              model: str = "auto", singer: str = "", instrumental: bool = False) -> dict:
+              model: str = "auto", singer: str = "", instrumental: bool = False,
+              score: str = "", cover: dict | None = None) -> dict:
     """Lyrics -> finished song on disk. Returns the library entry."""
     global _reporter
     import folder_paths
@@ -734,8 +737,13 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                   else library.apply_singer(style, singer))   # the prompt the model actually hears
     if sung_style != style:
         print(f"[studio] singer '{singer}' -> style: {sung_style}", flush=True)
+    score = (score or "").strip()
+    if score:
+        cot = "full" if library.score_has_chords(score) else "melody"   # what the score carries
     model = resolve_song_model(model)
     spec = library.get_song_model(model)
+    if score and spec.get("kind") == "ace15":
+        raise ValueError("Covers use YuE2: pick YuE2 (or Auto) as the song model in step 3.")
     memory = resolve_memory(memory)
     profile = YUE2_MEMORY[memory]
     kind = spec.get("kind", "native" if spec["file"] else "yue2")
@@ -843,13 +851,13 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                     print(f"[ACE-Step] {info}", flush=True)
                 elif kind == "native":
                     (audio, abc_score, info) = native_generate(
-                        pipe, sung_style, clean_lyrics, seed=seed, cot=cot,
+                        pipe, sung_style, clean_lyrics, seed=seed, cot=cot, score=score,
                         max_seconds=profile["max_minutes"] * 60.0)
                     print(f"[YuE2] {info}", flush=True)
                 else:
                     (audio, abc_score, info) = YuE2Sampler().generate(
                         pipeline=pipe, style=sung_style, lyrics=clean_lyrics, cot=cot,
-                        seed=seed, **sample)
+                        seed=seed, **dict(sample, abc=score or None))
                 _check()
                 duration = _seconds(audio)
                 cut_short = "'semantic': True" in str(info)   # ran into the length ceiling
@@ -917,6 +925,7 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                     "title": safe_title, "idea": idea, "lyrics": lyrics, "style": style,
                     "singer": singer, "seed": seed, "cot": cot, "voice": voice, "memory": memory, "model": model,
                     "cut_short": cut_short, "instrumental": bool(instrumental),
+                    **({"cover": cover} if cover else {}),
                     "duration": round(_seconds(final), 2),
                     "took": round(time.time() - started, 1), "engine": info,
                 })
@@ -927,6 +936,170 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
             _release_after_cancel(exc)
             raise
         except Exception as exc:
+            if _cancel.is_set():
+                _release_after_cancel(exc)
+                raise Cancelled("Cancelled") from None
+            traceback.print_exc()
+            raise
+        finally:
+            _flush()
+
+
+# ------------------------------------------------------------------ covers
+# SheetSage2 listens to a song and writes its melody, chords, key, tempo and sections as an
+# ABC score; make_song(score=...) then has YuE2 follow that melody. Checked on a real song:
+# same key, tempo and length, and 0.69 melody match vs 0.26 without the score.
+_ss2 = None
+WHISPER_ID = "openai/whisper-large-v3-turbo"
+_HALLUCINATIONS = re.compile(r"^(?:thanks? (?:you )?for watching.*|thank you\.?|you|bye\.?|music|\W*)$", re.IGNORECASE)
+
+
+def _drop_sheetsage():
+    global _ss2
+    if _ss2 is not None:
+        import comfy.model_management as mm
+        _ss2 = None
+        mm.unload_all_models()
+        _flush()
+
+
+def _load_sheetsage(rep):
+    global _ss2
+    import comfy.audio_encoders.audio_encoders as ae
+    import comfy.model_patcher  # noqa: F401  (the encoder builds a ModelPatcher)
+    import comfy.utils
+    if _ss2 is None:
+        if not os.path.isfile(library.sheetsage_path()):
+            rep.start("download")
+            library.download_sheetsage()
+            _check()
+        rep.start("load")
+        _ss2 = ae.load_audio_encoder_from_sd(
+            comfy.utils.load_torch_file(library.sheetsage_path(), safe_load=True))
+    else:
+        rep.skip("load")
+    return _ss2
+
+
+def _write_down_lyrics(vocals) -> list:
+    """Isolated vocals -> [(seconds, line)] with Whisper; quiet stretches are skipped
+    because Whisper invents words over silence ("Thanks for watching!")."""
+    import numpy as np
+    import torch
+    import torchaudio
+    from transformers import pipeline
+    wave = vocals["waveform"][0].float().mean(dim=0)
+    wave = torchaudio.functional.resample(wave, vocals["sample_rate"], 16000).numpy()
+    asr = pipeline("automatic-speech-recognition", model=WHISPER_ID, device=0, torch_dtype=torch.float16)
+    try:
+        out = asr(wave.copy(), chunk_length_s=30, batch_size=4, return_timestamps="word",
+                  generate_kwargs={"task": "transcribe"})
+    finally:
+        del asr
+        _flush()
+    words = [(*(chunk.get("timestamp") or (None, None)), chunk.get("text") or "") for chunk in out.get("chunks") or []]
+    loud = float(np.sqrt(np.mean(wave ** 2))) or 1e-6
+    lines = []
+    for end, text in library.group_words(words):
+        if _HALLUCINATIONS.match(text) or [t for _, t in lines[-2:]] == [text, text]:
+            continue                                      # a third identical line in a row is Whisper looping
+        part = wave[max(0, int((end - 2.5) * 16000)):int(end * 16000) + 1]
+        if part.size and float(np.sqrt(np.mean(part ** 2))) < 0.25 * loud:
+            continue                                      # nobody is singing here
+        lines.append((end, text))
+    return lines
+
+
+def analyze_cover(audio_path: str, name: str, lyrics: str = "transcribe", song_id: str = "") -> dict:
+    """A song file -> a saved cover plan (scores, key, tempo, sections, lyrics).
+    lyrics: "transcribe" writes the sung words down, "none" leaves section tags only,
+    anything else is used as the lyrics (a song made here already knows its words)."""
+    global _reporter
+    import torch
+    from comfy.audio_encoders.sheetsage2_abc import events_to_abc, interval_rows
+    import comfy.audio
+    import comfy.model_management as mm
+
+    write_down = lyrics == "transcribe"
+    plan = [("prepare", "Reading the song", 1)]
+    if not os.path.isfile(library.sheetsage_path()):
+        plan += [("download", "Downloading the song-listening model (1.4 GB, once)", 60, 90)]
+    plan += [("load", "Loading the song-listening model", 8, 10),
+             ("listen", "Listening: melody, chords, key and sections", 15, 20)]
+    if write_down:
+        plan += [("split", "Separating the vocals", 8, 10),
+                 ("words", "Writing down the lyrics", 30, 40)]
+    plan += [("save", "Saving", 1)]
+    with _run_lock:
+        _begin()
+        rep = _reporter = Reporter(plan)
+        started = time.time()
+        try:
+            with torch.inference_mode():
+                rep.start("prepare")
+                audio = _read_clip(audio_path)
+                seconds = _seconds(audio)
+                if seconds < 15:
+                    raise ValueError("That song is too short to cover; use at least 15 seconds of music.")
+                _make_room(4.0, keep="cover")
+                encoder = _load_sheetsage(rep)
+                _check()
+                rep.start("listen")
+                wave = comfy.audio.resample(audio["waveform"].float().mean(dim=1), audio["sample_rate"], 24000)
+                mm.load_model_gpu(encoder.patcher)
+                events = encoder.model.transcribe(wave[0][None].to(encoder.load_device))
+                melody = events_to_abc(events, seconds, melody_only=True)
+                full = events_to_abc(events, seconds, melody_only=False)
+                _drop_sheetsage()
+                _check()
+                summary = library.score_summary(full)
+                spans = interval_rows(events, "structure", seconds)
+                merged = []
+                for start, end, label in spans:
+                    tag = library.cover_tag(label)
+                    if merged and merged[-1]["name"] == label:
+                        merged[-1]["end"] = end
+                    else:
+                        merged.append({"name": label, "tag": tag, "start": round(start, 2), "end": round(end, 2)})
+                sections = summary["sections"]
+                if len(merged) == len(sections):          # the score's sections, with their times
+                    for section, span in zip(sections, merged):
+                        section.update(start=span["start"], end=span["end"])
+                else:
+                    sections = [dict(span, sung=True, lines=4) for span in merged] or sections
+                if write_down:
+                    from song_voice.song_voice_node import SongVoiceSplit
+                    rep.start("split")
+                    _make_room(3.0, keep="voice")
+                    (vocals, _music) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
+                    _park_voice_models()
+                    _check()
+                    rep.start("words")
+                    timed = _write_down_lyrics(vocals)
+                    _check()
+                    words = library.cover_lyrics(sections, timed) if timed else library.cover_lyrics(sections)
+                    source = "transcribed" if timed else "none"
+                elif lyrics and lyrics != "none":
+                    words, source = lyrics.strip() + "\n", "song"
+                else:
+                    words, source = library.cover_lyrics(sections), "none"
+                rep.start("save")
+                info = {"id": library.cover_id(name), "name": (name or "Song").strip()[:80],
+                        "duration": round(seconds, 2), "key": summary["key"], "bpm": summary["bpm"],
+                        "meter": summary["meter"], "sections": sections, "lyrics": words,
+                        "lyrics_source": source, "melody_abc": melody, "full_abc": full,
+                        "audio": audio_path, "song_id": song_id, "created": time.time()}
+                brief = library.save_cover(info)
+                print(f"[studio] cover of '{info['name']}' ready in {time.time() - started:.0f}s: "
+                      f"{summary['key']} {summary['bpm']} BPM, {len(sections)} sections, lyrics={source}", flush=True)
+            rep.finish()
+            return brief
+        except Cancelled as exc:
+            _drop_sheetsage()
+            _release_after_cancel(exc)
+            raise
+        except Exception as exc:
+            _drop_sheetsage()
             if _cancel.is_set():
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
