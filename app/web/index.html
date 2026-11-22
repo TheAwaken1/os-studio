@@ -309,6 +309,16 @@
         </details>
 
         <div class="action" id="action">
+          <div class="takes" id="takesRow">
+            <span class="takes-label" id="takesLabel">Takes</span>
+            <div class="seg" id="takesSeg" role="radiogroup" aria-labelledby="takesLabel">
+              <button type="button" role="radio" data-takes="1">1</button>
+              <button type="button" role="radio" data-takes="2">2</button>
+              <button type="button" role="radio" data-takes="3">3</button>
+              <button type="button" role="radio" data-takes="4">4</button>
+            </div>
+            <span class="hint" id="takesHint">Each take is a new performance of the same song: same lyrics, style and singer.</span>
+          </div>
           <button class="btn primary big" id="btnMake">
             <svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>
             <span>Make the song</span>
@@ -333,7 +343,7 @@
             <button class="btn primary" type="button" id="madeListen">
               <svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg><span>Listen now</span>
             </button>
-            <button class="btn" type="button" id="madeAgain">Make it again (new take)</button>
+            <button class="btn" type="button" id="madeAgain">Make another take</button>
             <button class="btn" type="button" id="madeNew">Start a new song</button>
           </div>
         </div>

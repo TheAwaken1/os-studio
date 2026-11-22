@@ -32,7 +32,7 @@
     presets: [], styleLibrary: [], styleSets: {}, styleEngine: "yue2", voices: [], singers: [], singer: "", singerOwn: false, songs: [], writers: [], writer: "", defaultWriter: "",
     songModels: [], songModel: "auto", autoSongModel: "",
     sections: [], structure: [], lines: 4, secondsPerLine: 3.9, engine: "starting",
-    job: null, handledJob: 0, logSeq: 0,
+    job: null, handledJob: 0, logSeq: 0, startedJobs: new Set(), takes: 1, takeRun: null,   // jobs this page started (only it autoplays them)
     current: null, version: "", lrc: null, undo: null,
   };
   const audio = $("audio");
@@ -679,7 +679,8 @@
     const prog = job.progress || { overall: 0, label: "Starting…", steps: [] };
     const pct = Math.round(prog.overall * 100) + "%";
     if (job.kind === "song") {
-      $("progLabel").textContent = prog.label || "Working…";
+      const run = state.takeRun;
+      $("progLabel").textContent = (run && run.total > 1 ? `Take ${run.done + 1} of ${run.total} · ` : "") + (prog.label || "Working…");
       $("progPct").textContent = pct;
       $("progTime").textContent = clock(job.elapsed);
       $("progBar").style.width = pct;
@@ -711,6 +712,7 @@
   async function finishJob(job) {
     if (job.id <= state.handledJob) return;
     state.handledJob = job.id;
+    if (job.state !== "done" && job.kind === "song") { state.takeRun = null; renderTakes(); }
     if (job.state === "error") {
       toast(job.error || "That didn't work.", "error", { label: "Details", run: () => openDrawer(true) });
       if (job.kind === "voice") { $("voiceError").textContent = job.error; $("voiceError").hidden = false; }
@@ -741,14 +743,25 @@
       if (state.songModels.some((m) => !m.installed)) refreshModels();
       await refreshSongs();
       const song = state.songs.find((s) => s.id === job.result.song.id) || job.result.song;
-      if (!state.current || (audio.paused && state.mode !== "listen")) loadSong(song, true);
+      // Every open copy of the app sees the finished job; only the one that started it plays it.
+      const mine = state.startedJobs.has(job.id);
+      if (!state.current || (mine && audio.paused && state.mode !== "listen")) loadSong(song, mine);
       guide.made = { id: song.id, title: song.title };
       guide.remix = null;
       state.draftDone = true;
       saveDraft(); renderGuide();
+      const run = mine ? state.takeRun : null;
+      if (run) run.done += 1;
+      const label = run && run.total > 1 ? `Take ${run.done} of ${run.total}, "${song.title}",` : `"${song.title}"`;
       if (song.cut_short) {
-        toast(`"${song.title}" is ready, but it ran into the length limit and may end abruptly. Shorten the lyrics, or raise Graphics memory in More options.`, "error");
-      } else toast(`"${song.title}" is ready.`, "ok", { label: "Listen", run: () => listenTo(song) });
+        toast(`${label} is ready, but it ran into the length limit and may end abruptly. Shorten the lyrics, or raise Graphics memory in More options.`, "error");
+      } else toast(`${label} is ready.`, "ok", { label: "Listen", run: () => listenTo(song) });
+      if (run && run.done < run.total) {
+        if (!await startTake()) { state.takeRun = null; renderTakes(); }
+      } else {
+        if (run && run.total > 1) toast(`All ${run.total} takes are ready in your songs.`, "ok", { label: "Listen", run: () => listenTo(song) });
+        state.takeRun = null; renderTakes();
+      }
     } else if (job.kind === "voice") {
       const fresh = await api("/api/voices");
       state.voices = fresh.voices;
@@ -807,6 +820,7 @@
     if (busy()) return false;
     try {
       const res = await api(path, opts);
+      state.startedJobs.add(res.job);
       state.job = { id: res.job, kind: lock, state: "running", elapsed: 0, progress: null };
       reflectBusy();
       poll();
@@ -857,15 +871,48 @@
     }
     const seedText = $("seed").value.trim();
     if (seedText && !/^\d{1,15}$/.test(seedText)) { toast("The seed has to be a whole number.", "error"); return; }
-    const started = await startJob("/api/song", { body: {
+    // The whole run uses this snapshot, so editing the page between takes changes nothing.
+    state.takeRun = { total: state.takes, done: 0, body: {
       lyrics, style, seed: seedText ? Number(seedText) : null, cot: $("cot").value,
       voice: state.voice || "", singer: singerValue(), title: $("title").value.trim(), idea: $("idea").value.trim(),
       memory: $("memory").value || "auto", model: state.songModel || "auto",
-    } }, "song");
+    } };
+    if (await startTake()) {
+      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else state.takeRun = null;
+    renderTakes();
+  }
+
+  // Take 1 keeps a seed typed in More options; every later take gets a fresh one, so each sounds different.
+  async function startTake() {
+    const run = state.takeRun;
+    const body = { ...run.body, seed: run.done === 0 ? run.body.seed : null };
+    const started = await startJob("/api/song", { body }, "song");
     if (started) {
       guide.made = null; renderGuide();
-      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      if (run.total > 1) $("progLabel").textContent = `Take ${run.done + 1} of ${run.total} · Starting…`;
     }
+    return started;
+  }
+
+  function renderTakes() {
+    const n = state.takes;
+    document.querySelectorAll("#takesSeg [data-takes]").forEach((b) => {
+      const on = Number(b.dataset.takes) === n;
+      b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on));
+      b.disabled = Boolean(state.takeRun);
+    });
+    $("btnMake").lastElementChild.textContent = n > 1 ? `Make ${n} takes` : "Make the song";
+    $("madeAgain").textContent = n > 1 ? `Make ${n} more takes` : "Make another take";
+    $("takesHint").textContent = n > 1
+      ? `${n} new performances of the same song, one after another (${n}× the time of one song). Each is saved as it finishes; Cancel stops the rest.`
+      : "Each take is a new performance of the same song: same lyrics, style and singer.";
+  }
+
+  function setTakes(n) {
+    state.takes = Math.min(4, Math.max(1, Number(n) || 1));
+    try { localStorage.setItem("yss.takes", String(state.takes)); } catch (_) { /* per-session only */ }
+    renderTakes();
   }
 
   /* ------------------------------------------------------------ library */
@@ -1207,7 +1254,22 @@
         try { session.setActionHandler(action, handler); } catch (_) { /* per-action browser support varies */ }
       });
     }
+    // One sound at a time across every open copy of the app (other tabs, Pinokio views, windows).
+    const pageId = Math.random().toString(36).slice(2);
+    let otherPages = null;
+    try {
+      otherPages = new BroadcastChannel("os-studio-playback");
+      otherPages.onmessage = (event) => {
+        if (event.data && event.data.playing && event.data.page !== pageId) {
+          audio.pause(); $("voiceAudio").pause(); $("recPlay").pause();
+        }
+      };
+    } catch (_) { /* older browser: each page still plays one sound at a time */ }
+    const claimSpeakers = () => { try { otherPages && otherPages.postMessage({ playing: true, page: pageId }); } catch (_) {} };
+    $("voiceAudio").addEventListener("play", claimSpeakers);
+    $("recPlay").addEventListener("play", claimSpeakers);
     audio.addEventListener("play", () => {
+      claimSpeakers();
       $("voiceAudio").pause(); $("recPlay").pause();
       reflectPlayback(); startTick(); renderSongs();
     });
@@ -2069,9 +2131,13 @@
     $("delVoiceCancel").onclick = () => $("delVoiceDlg").close();
     $("delVoiceOk").onclick = deleteVoice;
     $("btnMake").onclick = makeSong;
+    document.querySelectorAll("#takesSeg [data-takes]").forEach((b) => { b.onclick = () => setTakes(b.dataset.takes); });
+    try { state.takes = Math.min(4, Math.max(1, Number(localStorage.getItem("yss.takes")) || 1)); } catch (_) { /* default 1 */ }
+    renderTakes();
     $("btnCancel").onclick = () => {
       $("btnCancel").disabled = true;
       $("btnCancel").textContent = "Cancelling…";     // model loads finish before they can stop
+      state.takeRun = null;                           // and no further takes start
       api("/api/cancel", { method: "POST" }).catch(() => {});
     };
     document.querySelectorAll("[data-tag]").forEach((b) => { b.onclick = () => insertTag(b.dataset.tag); });

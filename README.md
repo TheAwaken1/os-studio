@@ -18,7 +18,7 @@ Create walks you through five steps. Only the step you are on is open; the ones 
 2. **Lyrics.** Edit the words. To get a different draft, pick a song shape and optional target length, then press **Write lyrics** again.
 3. **Pick the sound.** Choose a quick style, open **Browse more styles**, or describe your own.
 4. **Who sings it?** Choose the **AI singer** or a trained voice. With no voices yet, **Add my voice** records or uploads a reference and trains one.
-5. **Make the song.** Check the recap and press **Make the song**. When it finishes you get **Listen now**, **Make it again (new take)** and **Start a new song**.
+5. **Make the song.** Check the recap, pick how many **Takes** you want (1–4), and press **Make the song** (or **Make 3 takes**). Each take is a new performance of the same song: same lyrics, style and singer, with a new melody, arrangement and delivery. Takes render one after another, each is saved to your songs as it finishes, and Cancel stops the rest. When it finishes you get **Listen now**, **Make another take** and **Start a new song**.
 
 Finished songs are kept in **Listen** with timed lyrics and downloads. Voice-converted songs keep the original AI-singer version too; switch versions in the player.
 

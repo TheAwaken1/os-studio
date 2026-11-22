@@ -256,6 +256,12 @@ label input, label select { font-weight: 400; color: var(--text); font-size: 14p
 .input-row { display: flex; gap: 8px; align-items: center; }
 .input-row .icon-btn { height: 42px; width: 42px; }
 
+/* ------------------------------------------------------------ takes */
+.takes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.takes-label { font-weight: 600; font-size: 14px; }
+.takes .seg button { min-width: 40px; height: 32px; font-size: 14px; }
+.takes .hint { flex: 1 1 220px; margin: 0; }
+
 /* ------------------------------------------------------------ progress */
 .progress {
   padding: 18px 20px; border-radius: var(--radius); border: 1px solid rgba(254, 189, 73, .3);

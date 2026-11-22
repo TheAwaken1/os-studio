@@ -66,7 +66,10 @@ environment otherwise.
    (no music): record it right there with your microphone, or choose a file.
    That takes about 2.5 minutes and happens once per voice. The × on a voice
    deletes it (to the Recycle Bin).
-5. **Make the song.** When it is done it loads into the player with synced
+5. **Make the song.** Pick 1–4 **Takes** first to get several performances of
+   the same song (new melody and delivery each time; the lyrics, style and
+   singer stay the same). They render one after another and each is saved as
+   it finishes. When the first is done it loads into the player with synced
    lyrics — click any line to jump there. Songs sung in your voice keep the
    AI-singer version too; switch between them in the player.
 
