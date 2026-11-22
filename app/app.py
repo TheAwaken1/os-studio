@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 import library  # noqa: E402
+import update_check  # noqa: E402
 
 APP_ID = "yue2-song-studio"
 WEB = os.path.join(ROOT, "web")
@@ -322,6 +323,14 @@ def index():
 @app.get("/api/ping")
 def ping():
     return {"app": APP_ID}
+
+
+@app.get("/api/update")
+def api_update():
+    """Is there a newer OS Studio on GitHub? Off with "update_check": false in config.json."""
+    if library.CFG.get("update_check", True) is False:
+        return {"available": False}
+    return update_check.cached_check()
 
 
 @app.get("/api/state")

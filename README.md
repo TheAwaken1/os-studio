@@ -111,6 +111,10 @@ The YuE2 checkpoint weights are **CC BY-NC 4.0** (see `YuE2-3B/LICENSE`): no com
 ## Updates
 **Update** in the Pinokio menu runs `git pull` on this launcher and then re-runs Install, which picks up new dependencies and any missing models. Songs, voices, models and `app/config.json` are git-ignored, so updates never touch them.
 
+**Update notice:** a few seconds after the app opens, it asks GitHub once whether this repository has newer commits than your install (the answer is cached for 6 hours). If it does, a banner says so, links to the release notes, and reminds you that Update shows in Pinokio's menu once you stop OS Studio. **Later** hides it until the next new version. The request sends only the public repository name and your install's commit id. Offline, or with no git checkout, nothing is shown. To turn it off, add `"update_check": false` to `app/config.json`.
+
+Release notes for each version are on the [Releases page](https://github.com/TheAwaken1/os-studio/releases); press **Watch → Custom → Releases** on GitHub to be emailed when one comes out.
+
 ## Troubleshooting
 - Launcher logs: `logs/api/`; engine log: `app/logs/studio.log`.
 - Missing NVIDIA CUDA: update the NVIDIA driver and rerun Install.
@@ -155,6 +159,8 @@ Curl:
 curl http://127.0.0.1:YOUR_PORT/api/state
 curl http://127.0.0.1:YOUR_PORT/api/songs
 curl -X POST http://127.0.0.1:YOUR_PORT/api/cancel
+# Newer version on GitHub? {available, current, latest, behind, url, release:{tag,name,url}}
+curl http://127.0.0.1:YOUR_PORT/api/update
 
 # Styles: ask Qwen for one (a GPU job; poll /api/job, result.style = {name, style})
 curl -X POST http://127.0.0.1:YOUR_PORT/api/style-ai -H "Content-Type: application/json" \

@@ -113,7 +113,8 @@ legacy/           the old Gradio app, kept for reference
 
 `config.json` options: `port` (default 7861), `window` (`"app"` = own window
 via Edge, `"browser"` = a tab in your default browser), `models_dir`,
-`output_dir`.
+`output_dir`, `update_check` (default `true`: a banner tells you when GitHub
+has a newer version; `false` turns the check off).
 
 ## Checking it works
 

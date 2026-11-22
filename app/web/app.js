@@ -2228,6 +2228,7 @@
   }
 
   async function boot() {
+    setTimeout(checkForUpdate, 4000);   // after the page is up; never in its way, even if startup trips
     renderIdeas();
     freshStart();
     loadDraft();
@@ -2282,6 +2283,22 @@
     renderWriters(); renderSongModels(); renderShape(); renderStyles(); renderVoices(); lyricsMeta();
     try { await refreshSongs(); } catch (_) { /* shown by poll */ }
     poll();
+  }
+
+  // A newer OS Studio on GitHub? Pinokio's Update only shows while the app is stopped, so say so.
+  async function checkForUpdate() {
+    let info;
+    try { info = await api("/api/update"); } catch (_) { return; }
+    if (!info || !info.available) return;
+    try { if (localStorage.getItem("yss.updateLater") === info.latest) return; } catch (_) { /* show it */ }
+    const named = info.release ? ` (${info.release.name})` : "";
+    $("updateText").textContent = `A new version of OS Studio is available${named}. To get it, stop OS Studio in Pinokio and press Update. Your songs, voices and styles are kept.`;
+    $("updateWhatsNew").href = info.release ? info.release.url : info.url;
+    $("updateLater").onclick = () => {
+      $("updateBanner").hidden = true;
+      try { localStorage.setItem("yss.updateLater", info.latest); } catch (_) { /* hidden for this visit */ }
+    };
+    $("updateBanner").hidden = false;
   }
 
   boot();
