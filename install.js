@@ -21,6 +21,19 @@ module.exports = {
       method: "shell.run",
       params: { message: ["uv venv --python 3.10 app/env"] }
     },
+    // CUDA 13 needs NVIDIA driver 580+. Check before the multi-GB PyTorch download;
+    // break (PINOKIO.md shell.run `on` handlers) shows the reason and stops the install.
+    {
+      method: "shell.run",
+      params: {
+        path: "app", venv: "env",
+        message: ["python ../tools/check_driver.py"],
+        on: [
+          { event: "/OS Studio can't install:.*/", break: true },
+          { event: "/NVIDIA driver check passed/", kill: true }
+        ]
+      }
+    },
     {
       method: "shell.run",
       params: {
