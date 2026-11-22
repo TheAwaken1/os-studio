@@ -284,6 +284,33 @@ def _gpu():
         return None
 
 
+_CARD_GB: list = []
+
+
+def _card_total_gb() -> float | None:
+    """The graphics card's total memory, known before the engine has started."""
+    gpu = _gpu()
+    if gpu and gpu.get("total_gb"):
+        return gpu["total_gb"]
+    if not _CARD_GB:
+        try:
+            out = subprocess.run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            _CARD_GB.append(int(out.strip().splitlines()[0]) / 1024)
+        except Exception:
+            _CARD_GB.append(None)
+    return _CARD_GB[0]
+
+
+def _default_writer() -> str:
+    """Auto's lyrics writer: the full-size Qwen 4B needs 8.4 GB, so smaller cards get
+    the 4-bit build (4.1 GB, same speed) — the same cut-off Auto uses for the song model."""
+    total = _card_total_gb()
+    if total is not None and total < 11.5:
+        return library.SMALL_CARD_WRITER
+    return library.DEFAULT_WRITER
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     with open(os.path.join(WEB, "index.html"), encoding="utf-8") as fh:
@@ -310,7 +337,7 @@ def state():
         "singers": library.SINGER_PRESETS,
         "voices": library.list_voices(),
         "writers": library.lyrics_writers(),
-        "default_writer": library.DEFAULT_WRITER,
+        "default_writer": _default_writer(),
         "song_models": library.song_models(),
         "sections": library.SECTIONS,
         "default_structure": library.DEFAULT_STRUCTURE,
@@ -397,7 +424,7 @@ def api_style_ai(body: StyleAIBody):
         raise HTTPException(400, "Keep the description under 400 characters.")
     if body.engine not in STYLE_FILES:
         raise HTTPException(400, "Unknown song engine.")
-    writer = body.writer or library.DEFAULT_WRITER
+    writer = body.writer or _default_writer()
     if writer not in [w["id"] for w in library.LYRICS_WRITERS]:
         raise HTTPException(400, "Unknown lyrics writer.")
 
@@ -449,7 +476,7 @@ def api_lyrics(body: LyricsBody):
     idea = body.idea.strip()
     if not idea:
         raise HTTPException(400, "Type what the song should be about first.")
-    writer = body.writer or library.DEFAULT_WRITER
+    writer = body.writer or _default_writer()
     if writer not in [w["id"] for w in library.LYRICS_WRITERS]:
         raise HTTPException(400, "Unknown lyrics writer.")
     memory = _lyrics_memory(body.memory)

@@ -132,8 +132,8 @@ class LengthApiTests(unittest.TestCase):
         lib.LYRICS_WRITERS = [{'id': 'fixture'}]
         start = Mock(return_value={'job': 'test-job'})
         env = dict(library=lib, BaseModel=BaseModel, Field=Field, HTTPException=HTTPException,
-                   app=FastAPI(), _gpu=lambda: gpu, _start=start)
-        ns = extract(root, 'app.py', {'LyricsBody', 'LyricsPlanBody', '_lyrics_memory', '_lyrics_plan', 'api_lyrics_plan', 'api_lyrics'}, env)
+                   app=FastAPI(), _gpu=lambda: gpu, _start=start, _card_total_gb=lambda: None)
+        ns = extract(root, 'app.py', {'LyricsBody', 'LyricsPlanBody', '_lyrics_memory', '_lyrics_plan', 'api_lyrics_plan', 'api_lyrics', '_default_writer'}, env)
         return ns, AsgiClient(ns.app), start
 
     def test_read_only_plan_memory_limits_and_strict_input(self):

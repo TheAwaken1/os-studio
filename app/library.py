@@ -997,6 +997,7 @@ LYRICS_WRITERS = [
      "vram_gb": 4.1, "download_gb": 4.3},
 ]
 DEFAULT_WRITER = "qwen4b"
+SMALL_CARD_WRITER = "qwen4b-4bit"    # Auto on cards under 11.5 GB
 
 
 def writer_dir(writer: dict) -> str:

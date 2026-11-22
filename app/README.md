@@ -23,6 +23,9 @@ node graph.
   - **8 GB:** *YuE2 3B · INT8* (`yue2_3b_int8_convrot.safetensors` in
     `models\checkpoints`, 3.7 GB, downloaded on first use if missing) — 4.5 GB
     of model memory, 6.5 GB reserved, about 85 s for the same song.
+  - The lyrics writer follows the same rule: under 11.5 GB, Auto uses
+    *Qwen 4B · 4-bit* (4.1 GB, same speed) instead of the full 8.4 GB model.
+    Only one model is on the card at a time, so 8 GB cards can run everything.
   - Tested on an RTX 5080 only; the small-card numbers come from hard-capping
     its memory, not from a real 8 GB or 12 GB card.
 - Python 3.10 (setup creates its own `env\`; nothing else on the PC is touched).
