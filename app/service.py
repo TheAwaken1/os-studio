@@ -717,7 +717,7 @@ def _seconds(audio) -> float:
 
 def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
               voice: str = "", title: str = "", idea: str = "", memory: str = "auto",
-              model: str = "auto", singer: str = "") -> dict:
+              model: str = "auto", singer: str = "", instrumental: bool = False) -> dict:
     """Lyrics -> finished song on disk. Returns the library entry."""
     global _reporter
     import folder_paths
@@ -726,9 +726,12 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
     from song_lrc.song_lrc_node import SongFilename, SongLyricsClean, SongLyricsToLRC
     from yue2_repo.nodes.yue2 import YuE2Sampler
 
-    voice = (voice or "").strip()
-    singer = (singer or "").strip()
-    sung_style = library.apply_singer(style, singer)   # the prompt the model actually hears
+    voice = "" if instrumental else (voice or "").strip()
+    singer = "" if instrumental else (singer or "").strip()
+    if instrumental:
+        lyrics = ""                                     # YuE2 plays music only when the lyrics are blank
+    sung_style = (library.instrumental_style(style) if instrumental
+                  else library.apply_singer(style, singer))   # the prompt the model actually hears
     if sung_style != style:
         print(f"[studio] singer '{singer}' -> style: {sung_style}", flush=True)
     model = resolve_song_model(model)
@@ -739,7 +742,7 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
     needs_gb = profile["needs_gb"] if kind == "yue2" else spec["needs_gb"]
     sample = dict(YUE2_SAMPLE, semantic_max_tokens=profile["max_tokens"])
     seed = int(seed) if seed not in (None, "", 0, "0") else random.randint(1, 2**48)
-    plan = [("prepare", "Reading the lyrics", 1)]
+    plan = [("prepare", "Getting ready" if instrumental else "Reading the lyrics", 1)]
     if not spec["installed"]:
         if kind == "native" and spec["file"] != library.INT8_FILE:
             raise ValueError(f"The song model '{spec['name']}' is not installed on this PC.")
@@ -747,8 +750,13 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
         plan += [("download", f"Downloading the song model ({size:g} GB, once)", 120, 180)]
     plan += [("load", "Loading the song model", 40, 45),
             ("compose", "Composing the song", 35),
-            ("decode", "Rendering the audio", 10),
-            ("align", "Timing the lyrics", 6, 8)]
+            ("decode", "Rendering the audio", 10)]
+    if instrumental:
+        # YuE2 invents words and sings them even with blank lyrics (checked with Whisper),
+        # so the vocals are taken out afterwards; the music-only track transcribes as silence.
+        plan += [("split", "Taking out the vocals", 6, 8)]
+    else:
+        plan += [("align", "Timing the lyrics", 6, 8)]
     if voice:
         plan += [("split", "Separating the vocals", 6, 8),
                  ("clone", f"Singing it in {voice}", 60, 65),
@@ -765,11 +773,15 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                 if voice and voice not in [v["name"] for v in library.list_voices()]:
                     raise ValueError(f"There is no trained voice called '{voice}'.")
                 lyrics = library.strip_multipliers(lyrics)       # "2x [verse]" -> "[verse]"
-                (clean_lyrics, found_title) = SongLyricsClean().clean(lyrics)
-                if not clean_lyrics.strip():
-                    raise ValueError("The lyrics are empty after cleaning — add some lines.")
+                if instrumental:
+                    clean_lyrics, found_title = "", "Instrumental"
+                else:
+                    (clean_lyrics, found_title) = SongLyricsClean().clean(lyrics)
+                    if not clean_lyrics.strip():
+                        raise ValueError("The lyrics are empty after cleaning — add some lines.")
                 (_prefix, safe_title) = SongFilename().prepare(
                     title=(title or "").strip() or found_title, folder="")
+                safe_title = library.numbered_title(safe_title)   # a second take is "Title 2", not another "Title"
                 _check()
 
                 # The song model gets the whole card, like in the workflow.
@@ -813,7 +825,7 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
 
                 sung_lines = [ln for ln in clean_lyrics.splitlines()
                               if ln.strip() and not re.match(r"^\s*(\d+x\s*)?\[.*\]\s*$", ln)]
-                expected_tokens = max(800.0, len(sung_lines) * 105.0)
+                expected_tokens = 6000.0 if instrumental else max(800.0, len(sung_lines) * 105.0)
 
                 def bar(value, total):
                     if total > 512:                      # token bar (abc + semantic)
@@ -826,8 +838,8 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                 rep.start("compose", bar=None if kind == "ace15" else bar)   # ACE's own bars aren't YuE2 token counts
                 if kind == "ace15":
                     (audio, abc_score, info) = ace15_generate(
-                        pipe, sung_style, clean_lyrics, seed=seed,
-                        seconds=ace15_seconds(clean_lyrics, profile["max_minutes"] * 60.0))
+                        pipe, sung_style, clean_lyrics or "[Instrumental]", seed=seed,
+                        seconds=120.0 if instrumental else ace15_seconds(clean_lyrics, profile["max_minutes"] * 60.0))
                     print(f"[ACE-Step] {info}", flush=True)
                 elif kind == "native":
                     (audio, abc_score, info) = native_generate(
@@ -845,21 +857,31 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                     print(f"[studio] the song hit the {profile['max_minutes']}-minute ceiling "
                           f"of the '{memory}' memory setting and may end abruptly", flush=True)
 
-                rep.start("align")
-                (lrc,) = SongLyricsToLRC().make_lrc(
-                    lyrics=clean_lyrics, seconds=duration, audio=audio,
-                    structure=abc_score or "", title=safe_title, artist="",
-                    language="en", offset_seconds=0.0, timing_scale=1.0,
-                    prefer_alignment=True, word_timing=True)
-                _check()
+                lrc = None
+                if not instrumental:
+                    rep.start("align")
+                    (lrc,) = SongLyricsToLRC().make_lrc(
+                        lyrics=clean_lyrics, seconds=duration, audio=audio,
+                        structure=abc_score or "", title=safe_title, artist="",
+                        language="en", offset_seconds=0.0, timing_scale=1.0,
+                        prefer_alignment=True, word_timing=True)
+                    _check()
 
                 original, final = audio, audio
+                parts = None                             # (vocals, music) when they get split apart
+                if instrumental:
+                    from song_voice.song_voice_node import SongVoiceSplit
+                    rep.start("split")
+                    _make_room(3.0, keep="voice")
+                    (_invented, final) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
+                    _park_voice_models()
+                    _check()
                 if voice:
                     from song_voice.song_voice_node import (
                         SongVoiceClone, SongVoiceLoad, SongVoiceMix, SongVoiceSplit)
                     rep.start("split")
                     _make_room(6.0, keep="voice")
-                    (vocals, instrumental) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
+                    (vocals, music) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
                     _check()
 
                     rep.start("clone")
@@ -869,9 +891,10 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                         vocals=vocals, trained_voice=trained, my_voice=None, **voice_clone_settings(voice))
                     _check()
 
+                    parts = (cloned, music)
                     rep.start("mix")
                     (final,) = SongVoiceMix().mix(
-                        vocals=cloned, instrumental=instrumental, vocal_gain_db=0,
+                        vocals=cloned, instrumental=music, vocal_gain_db=0,
                         instrumental_gain_db=0, instrumental_semitones=0)
                     _park_voice_models()
                     _check()
@@ -881,12 +904,19 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                 write_mp3(final, mp3)
                 if voice:
                     write_mp3(original, library.sidecar(mp3, ".ai.mp3"))
-                with open(library.sidecar(mp3, ".lrc"), "w", encoding="utf-8", newline="\n") as fh:
-                    fh.write(str(lrc))
+                if parts:                                # the split was free: keep both halves
+                    write_mp3(parts[0], library.sidecar(mp3, ".vocals.mp3"))
+                    write_mp3(parts[1], library.sidecar(mp3, ".instrumental.mp3"))
+                if lrc is not None:
+                    with open(library.sidecar(mp3, ".lrc"), "w", encoding="utf-8", newline="\n") as fh:
+                        fh.write(str(lrc))
+                if (abc_score or "").strip():            # the melody plan, for remixes and covers later
+                    with open(library.sidecar(mp3, ".abc"), "w", encoding="utf-8", newline="\n") as fh:
+                        fh.write(abc_score.strip() + "\n")
                 library.write_meta(mp3, {
                     "title": safe_title, "idea": idea, "lyrics": lyrics, "style": style,
                     "singer": singer, "seed": seed, "cot": cot, "voice": voice, "memory": memory, "model": model,
-                    "cut_short": cut_short,
+                    "cut_short": cut_short, "instrumental": bool(instrumental),
                     "duration": round(_seconds(final), 2),
                     "took": round(time.time() - started, 1), "engine": info,
                 })
@@ -895,6 +925,55 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
             return library.describe(mp3)
         except Cancelled as exc:
             _release_after_cancel(exc)
+            raise
+        except Exception as exc:
+            if _cancel.is_set():
+                _release_after_cancel(exc)
+                raise Cancelled("Cancelled") from None
+            traceback.print_exc()
+            raise
+        finally:
+            _flush()
+
+
+# ------------------------------------------------------------------ split
+def split_song(sid: str) -> dict:
+    """Finished song -> its music (.instrumental.mp3) and its vocals (.vocals.mp3)."""
+    global _reporter
+    import torch
+    from mp3_save import write_mp3
+    from song_voice.song_voice_node import SongVoiceSplit
+
+    mp3 = library.song_path(sid)
+    with _run_lock:
+        _begin()
+        rep = _reporter = Reporter([("prepare", "Reading the song", 1),
+                                    ("split", "Separating the music and the vocals", 30, 40),
+                                    ("save", "Saving", 2, 3)])
+        started = time.time()
+        try:
+            with torch.inference_mode():
+                rep.start("prepare")
+                audio = _read_clip(mp3)
+                _check()
+                rep.start("split")
+                _make_room(3.0, keep="voice")
+                (vocals, music) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
+                _park_voice_models()
+                _check()
+                rep.start("save")
+                write_mp3(music, library.sidecar(mp3, ".instrumental.mp3"))
+                write_mp3(vocals, library.sidecar(mp3, ".vocals.mp3"))
+                print(f"[studio] split {os.path.basename(mp3)} in {time.time() - started:.0f}s", flush=True)
+            rep.finish()
+            return library.describe(mp3)
+        except Cancelled as exc:
+            _release_after_cancel(exc)
+            for ext in (".instrumental.mp3", ".vocals.mp3"):    # never leave half a pair
+                try:
+                    os.remove(library.sidecar(mp3, ext))
+                except OSError:
+                    pass
             raise
         except Exception as exc:
             if _cancel.is_set():

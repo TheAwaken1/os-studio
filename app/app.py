@@ -274,6 +274,7 @@ class SongBody(BaseModel):
     idea: str = ""
     memory: str = "auto"
     model: str = "auto"
+    instrumental: bool = False      # no vocals: lyrics are ignored
 
 
 def _gpu():
@@ -508,7 +509,7 @@ def api_lyrics(body: LyricsBody):
 
 @app.post("/api/song")
 def api_song(body: SongBody):
-    if not body.lyrics.strip():
+    if not body.instrumental and not body.lyrics.strip():
         raise HTTPException(400, "There are no lyrics yet — write or paste some first.")
     if not body.style.strip():
         raise HTTPException(400, "Pick a style or describe one.")
@@ -528,9 +529,27 @@ def api_song(body: SongBody):
         return {"song": service.make_song(
             lyrics=body.lyrics, style=body.style.strip(), seed=body.seed, cot=body.cot,
             voice=body.voice, title=body.title, idea=body.idea, memory=body.memory,
-            model=body.model, singer=body.singer)}
+            model=body.model, singer=body.singer, instrumental=body.instrumental)}
 
     return _start("song", run)
+
+
+@app.post("/api/songs/{sid}/split")
+def api_split_song(sid: str):
+    """Save the music and the vocals of a finished song as their own versions (a GPU job)."""
+    try:
+        song = library.describe(library.song_path(sid))
+    except FileNotFoundError:
+        raise HTTPException(404, "That song is no longer on disk.") from None
+    if song["instrumental"]:
+        raise HTTPException(400, "This song is already an instrumental.")
+    if song["has_inst"] and song["has_vocals"]:
+        return {"job": None, "song": song}
+
+    def run(service, job):
+        return {"song": service.split_song(sid)}
+
+    return _start("split", run)
 
 
 @app.post("/api/cancel")
@@ -573,10 +592,7 @@ def api_song_viz(sid: str, v: str = ""):
         path = library.song_path(sid)
     except FileNotFoundError:
         raise HTTPException(404, "That song is no longer on disk.") from None
-    if v == "ai":
-        ai = library.sidecar(path, ".ai.mp3")
-        if os.path.isfile(ai):
-            path = ai
+    path = library.version_path(path, v)
     try:
         return JSONResponse(library.song_viz(path), headers={"Cache-Control": "private, max-age=3600"})
     except Exception as exc:  # the player falls back to a plain progress bar
@@ -589,10 +605,7 @@ def media(sid: str, v: str = "", dl: int = 0):
         path = library.song_path(sid)
     except FileNotFoundError:
         raise HTTPException(404, "That song is no longer on disk.") from None
-    if v == "ai":
-        ai = library.sidecar(path, ".ai.mp3")
-        if os.path.isfile(ai):
-            path = ai
+    path = library.version_path(path, v)
     return FileResponse(path, media_type="audio/mpeg",
                         filename=os.path.basename(path) if dl else None)
 

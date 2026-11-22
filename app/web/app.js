@@ -32,7 +32,7 @@
     presets: [], styleLibrary: [], styleSets: {}, styleEngine: "yue2", voices: [], singers: [], singer: "", singerOwn: false, songs: [], writers: [], writer: "", defaultWriter: "",
     songModels: [], songModel: "auto", autoSongModel: "",
     sections: [], structure: [], lines: 4, secondsPerLine: 3.9, engine: "starting",
-    job: null, handledJob: 0, logSeq: 0, startedJobs: new Set(), takes: 1, takeRun: null,   // jobs this page started (only it autoplays them)
+    job: null, handledJob: 0, logSeq: 0, startedJobs: new Set(), takes: 1, takeRun: null, instrumental: false,   // jobs this page started (only it autoplays them)
     current: null, version: "", lrc: null, undo: null,
   };
   const audio = $("audio");
@@ -105,6 +105,7 @@
     return hit ? hit.name : value;
   };
   const singerSummary = () => {
+    if (state.instrumental) return "No vocals (instrumental)";
     const kind = singerLabel();
     const who = kind ? `${kind} AI singer` : "AI singer";
     return state.voice ? `${state.voice} (your voice) · ${kind ? kind + " base" : "AI base"}` : who;
@@ -118,7 +119,8 @@
                     writer: state.writer || "", songModel: state.songModel || "auto",
                     structure: state.structure, lines: state.lines,
                     guide: guide.core ? guide.core.toJSON() : null, remix: guide.remix,
-                    done: Boolean(state.draftDone), writtenKey: state.writtenKey ?? null };
+                    done: Boolean(state.draftDone), writtenKey: state.writtenKey ?? null,
+                    instrumental: Boolean(state.instrumental) };
     FIELDS.forEach((f) => { draft[f] = $(f).value; });
     localStorage.setItem("yss.draft", JSON.stringify(draft));
   }
@@ -128,6 +130,7 @@
     FIELDS.forEach((f) => { if (draft[f] != null && draft[f] !== "") $(f).value = draft[f]; });
     if (!["auto", "60", "120", "180", "custom"].includes($("targetLength").value)) $("targetLength").value = "auto";
     state.voice = draft.voice || "";
+    state.instrumental = Boolean(draft.instrumental);
     state.singer = typeof draft.singer === "string" ? draft.singer : "";
     state.singerOwn = Boolean(draft.singerOwn);
     $("singerCustom").value = draft.singerCustom || "";
@@ -190,7 +193,7 @@
   };
   function guideFacts() {
     return { idea: Boolean($("idea").value.trim()), lyrics: Boolean($("lyrics").value.trim()),
-             style: Boolean($("style").value.trim()) };
+             style: Boolean($("style").value.trim()), instrumental: Boolean(state.instrumental) };
   }
   function soundLabel() {
     const style = $("style").value.trim();
@@ -206,8 +209,8 @@
     const lines = state.lyricLines || 0;
     const words = lines ? `${lines} line${lines === 1 ? "" : "s"}` : "";
     const summaries = [
-      facts.idea ? brief($("idea").value) : (core.ownLyrics ? "Using my own lyrics" : ""),
-      words, soundLabel(), singerSummary(), guide.made ? "Done" : "Ready when you are",
+      facts.idea ? brief($("idea").value) : (state.instrumental ? "Instrumental" : (core.ownLyrics ? "Using my own lyrics" : "")),
+      state.instrumental ? "Not sung" : words, soundLabel(), singerSummary(), guide.made ? "Done" : "Ready when you are",
     ];
     document.querySelectorAll(".step").forEach((card) => {
       const index = Number(card.dataset.step);
@@ -261,6 +264,7 @@
   function startFresh() {
     $("idea").value = ""; $("title").value = ""; $("seed").value = "";
     guide.remix = null; guide.made = null;
+    state.instrumental = false; renderVocals();
     if (guide.core) guide.core.restart();
     setLyrics("");
     saveDraft(); renderGuide();
@@ -661,12 +665,15 @@
     if (kind !== "song") { $("btnCancel").disabled = false; $("btnCancel").textContent = "Cancel"; state.stepSignature = null; }
     $("voiceProgress").hidden = kind !== "voice";
     $("voiceTrain").disabled = running;
+    $("btnSplit").disabled = running;
+    $("btnSplit").classList.toggle("busy", kind === "split");
+    if (kind !== "split") $("btnSplit").lastElementChild.textContent = "Music & vocals";
     const pill = $("enginePill");
     if (state.engine === "error") {
       pill.dataset.state = "error"; pill.lastElementChild.textContent = "Engine failed to start";
     } else if (running) {
       pill.dataset.state = "busy";
-      pill.lastElementChild.textContent = { song: "Making a song", lyrics: "Writing lyrics", voice: "Learning a voice", style: "Making a style" }[kind];
+      pill.lastElementChild.textContent = { song: "Making a song", lyrics: "Writing lyrics", voice: "Learning a voice", style: "Making a style", split: "Splitting a song" }[kind];
     } else if (state.engine === "ready") {
       pill.dataset.state = "ready"; pill.lastElementChild.textContent = "Ready";
     } else {
@@ -696,6 +703,8 @@
       $("vpPct").textContent = pct;
       $("vpTime").textContent = clock(job.elapsed);
       $("vpBar").style.width = pct;
+    } else if (job.kind === "split") {
+      $("btnSplit").lastElementChild.textContent = `Splitting… ${pct}`;
     } else if (job.kind === "style") {
       $("styleAIHint").textContent = `${prog.label || "Starting"}… ${clock(job.elapsed)}`;
     } else if (job.kind === "lyrics") {
@@ -762,6 +771,16 @@
         if (run && run.total > 1) toast(`All ${run.total} takes are ready in your songs.`, "ok", { label: "Listen", run: () => listenTo(song) });
         state.takeRun = null; renderTakes();
       }
+    } else if (job.kind === "split") {
+      await refreshSongs();
+      const song = state.songs.find((s) => s.id === job.result.song.id);
+      if (song && state.current && state.current.id === song.id) {
+        state.current = song;
+        renderVersions(song);
+        $("btnSplit").hidden = true;
+      }
+      toast(`"${job.result.song.title}" now has Music only and Vocals only versions. Switch at the top of the player.`, "ok",
+            song ? { label: "Play music only", run: () => { if (!state.current || state.current.id !== song.id) loadSong(song, true, { version: "inst" }); else { switchVersion("inst"); requestPlay(); } } } : undefined);
     } else if (job.kind === "voice") {
       const fresh = await api("/api/voices");
       state.voices = fresh.voices;
@@ -820,6 +839,7 @@
     if (busy()) return false;
     try {
       const res = await api(path, opts);
+      if (!res.job) return false;
       state.startedJobs.add(res.job);
       state.job = { id: res.job, kind: lock, state: "running", elapsed: 0, progress: null };
       reflectBusy();
@@ -857,8 +877,9 @@
   }
 
   async function makeSong() {
-    const lyrics = $("lyrics").value.trim();
-    if (!lyrics) {
+    const instrumental = Boolean(state.instrumental);
+    const lyrics = instrumental ? "" : $("lyrics").value.trim();
+    if (!lyrics && !instrumental) {
       toast("There are no lyrics yet — write some in step 2, or let step 1 write them.", "error");
       goStep(1); $("lyrics").focus();
       return;
@@ -874,8 +895,10 @@
     // The whole run uses this snapshot, so editing the page between takes changes nothing.
     state.takeRun = { total: state.takes, done: 0, body: {
       lyrics, style, seed: seedText ? Number(seedText) : null, cot: $("cot").value,
-      voice: state.voice || "", singer: singerValue(), title: $("title").value.trim(), idea: $("idea").value.trim(),
-      memory: $("memory").value || "auto", model: state.songModel || "auto",
+      voice: state.voice || "", singer: singerValue(), idea: $("idea").value.trim(),
+      title: $("title").value.trim() || (instrumental      // "late night rain" -> "Late Night Rain"
+        ? brief($("idea").value, 60).replace(/…$/, "").replace(/(^|\s)(\S)/g, (m, sp, c) => sp + c.toUpperCase()) : ""),
+      memory: $("memory").value || "auto", model: state.songModel || "auto", instrumental,
     } };
     if (await startTake()) {
       $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -907,6 +930,32 @@
     $("takesHint").textContent = n > 1
       ? `${n} new performances of the same song, one after another (${n}× the time of one song). Each is saved as it finishes; Cancel stops the rest.`
       : "Each take is a new performance of the same song: same lyrics, style and singer.";
+  }
+
+  function renderVocals() {
+    $("composer").dataset.instrumental = String(Boolean(state.instrumental));
+    $("idea").placeholder = state.instrumental ? "optional: a title for it, e.g. Late Night Rain"
+                                               : "a song about a fluffy cute white shih tzu";
+    document.querySelectorAll("#vocalsSeg [data-vocals]").forEach((b) => {
+      const on = (b.dataset.vocals === "off") === Boolean(state.instrumental);
+      b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on));
+    });
+  }
+
+  // Instrumentals need no lyrics: open step 3 directly (steps 1-2 count as done).
+  function skipToSound() {
+    if (guide.ready && guide.core.on) {
+      guide.core.reached = Math.max(guide.core.reached, 2);
+      goStep(2);
+    } else {
+      $("stepStyle").scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+    }
+  }
+
+  function setInstrumental(on) {
+    state.instrumental = Boolean(on);
+    state.draftDone = false;
+    renderVocals(); saveDraft(); renderGuide();
   }
 
   function setTakes(n) {
@@ -1033,6 +1082,7 @@
     $("seed").value = "";                       // a remix is a new performance, never a copy
     if (song.cot) $("cot").value = song.cot;
     state.voice = song.voice && state.voices.some((v) => v.name === song.voice) ? song.voice : "";
+    state.instrumental = Boolean(song.instrumental); renderVocals();
     const sung = song.singer || "";
     state.singerOwn = Boolean(sung) && !state.singers.some((p) => p.id === sung);
     state.singer = state.singerOwn ? "" : sung;
@@ -1116,7 +1166,7 @@
     try {
       session.metadata = state.current && window.MediaMetadata ? new MediaMetadata({
         title: state.current.title,
-        artist: state.version === "ai" ? "AI singer" : (state.current.voice || "AI singer"),
+        artist: versionLabel(),
         album: "OS Studio",
         artwork: [{ src: new URL("/static/player-artwork.png?v=os-studio-1", window.location.href).href,
           sizes: "1024x1024", type: "image/png" }],
@@ -1145,7 +1195,7 @@
     $("miniPlayer").hidden = !song || (state.mode === "listen" && state.transportInView !== false);
     $("miniTitle").textContent = song ? song.title : "Your song";
     $("miniSub").textContent = song
-      ? (state.version === "ai" ? "AI singer" : (song.voice || "AI singer")) + (playing ? " · Playing" : " · Paused") : "";
+      ? versionLabel() + (playing ? " · Playing" : " · Paused") : "";
     const at = song ? queue.order.indexOf(song.id) : -1;
     $("queueMeta").textContent = queue.order.length
       ? (at >= 0 ? `${at + 1} of ${queue.order.length}` : `${queue.order.length} songs`) + " · " +
@@ -1402,18 +1452,17 @@
   async function loadSong(song, autoplay, options = {}) {
     const loadId = state.songLoadId = (state.songLoadId || 0) + 1;
     state.current = song;
-    state.version = song.has_ai && options.version === "ai" ? "ai" : "";
+    state.version = songVersions(song).some((v) => v.v === options.version) ? options.version : "";
     queue.select(song.id);
     if (queue.shuffle && !options.fromQueue) queue.setShuffle(true);
     state.pendingSeek = null;
     $("player").dataset.empty = "false";
     $("npTitle").textContent = song.title;
-    const bits = [styleName(song.style), song.voice ? "sung in " + song.voice : ((song.singer ? (state.singers.find((p) => p.id === song.singer) || { name: song.singer }).name + " " : "") + "AI singer"),
+    const bits = [styleName(song.style), song.instrumental ? "Instrumental" : song.voice ? "sung in " + song.voice : ((song.singer ? (state.singers.find((p) => p.id === song.singer) || { name: song.singer }).name + " " : "") + "AI singer"),
                   clock(song.duration), when(song.created)].filter(Boolean);
     $("npSub").textContent = bits.join(" · ");
-    $("versionSeg").hidden = !song.has_ai;
-    $("versionSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === state.version));
-    if (song.has_ai) $("versionSeg").firstElementChild.textContent = song.voice || "My voice";
+    renderVersions(song);
+    $("btnSplit").hidden = song.instrumental || (song.has_inst && song.has_vocals);
     $("dlMp3").href = mediaUrl(song, state.version, true);
     $("dlLrc").href = "/api/songs/" + song.id + "/lrc?dl=1";
     $("dlLrc").hidden = !song.has_lrc;
@@ -1441,9 +1490,34 @@
     renderLyricsView(song); syncLyrics();
   }
 
+  /* The mixes a song has: itself, the AI singer before voice cloning, and the split-out halves. */
+  function songVersions(song) {
+    if (!song) return [];
+    const list = [{ v: "", label: song.instrumental ? "Instrumental" : song.voice || (song.has_inst ? "Full song" : "AI singer") }];
+    if (song.has_ai) list.push({ v: "ai", label: "AI singer" });
+    if (song.has_inst) list.push({ v: "inst", label: "Music only" });
+    if (song.has_vocals) list.push({ v: "vocals", label: "Vocals only" });
+    return list;
+  }
+  const versionLabel = () => {
+    const hit = songVersions(state.current).find((v) => v.v === state.version);
+    return hit ? hit.label : "AI singer";
+  };
+
+  function renderVersions(song) {
+    const seg = $("versionSeg"), list = songVersions(song);
+    seg.replaceChildren(...list.map(({ v, label }) => {
+      const b = el("button", v === state.version ? "on" : "", label);
+      b.type = "button"; b.dataset.v = v;
+      b.onclick = () => switchVersion(v);
+      return b;
+    }));
+    seg.hidden = list.length < 2;
+  }
+
   function switchVersion(version) {
     const song = state.current;
-    if (!song || !song.has_ai || !["", "ai"].includes(version) || version === state.version) return;
+    if (!song || !songVersions(song).some((v) => v.v === version) || version === state.version) return;
     const at = audio.currentTime, playing = !audio.paused;
     state.version = version;
     state.pendingSeek = { id: song.id, version, time: at };
@@ -2132,6 +2206,16 @@
     $("delVoiceOk").onclick = deleteVoice;
     $("btnMake").onclick = makeSong;
     document.querySelectorAll("#takesSeg [data-takes]").forEach((b) => { b.onclick = () => setTakes(b.dataset.takes); });
+    document.querySelectorAll("[data-vocals]").forEach((b) => { b.onclick = () => setInstrumental(b.dataset.vocals === "off"); });
+    $("btnInstrumental").onclick = () => { setInstrumental(true); skipToSound(); };
+    document.querySelectorAll("[data-skip-sound]").forEach((b) => { b.onclick = skipToSound; });
+    $("btnSplit").onclick = async () => {
+      const song = state.current;
+      if (!song || busy()) return;
+      if (await startJob(`/api/songs/${song.id}/split`, { body: {} }, "split"))
+        toast("Separating the music and the vocals. This takes about a minute the first time, then seconds.");
+    };
+    renderVocals();
     try { state.takes = Math.min(4, Math.max(1, Number(localStorage.getItem("yss.takes")) || 1)); } catch (_) { /* default 1 */ }
     renderTakes();
     $("btnCancel").onclick = () => {
@@ -2200,7 +2284,6 @@
       $("vol").style.setProperty("--p", $("vol").value + "%");
       localStorage.setItem("yss.vol", $("vol").value);
     });
-    $("versionSeg").querySelectorAll("button").forEach((b) => { b.onclick = () => switchVersion(b.dataset.v); });
     document.addEventListener("keydown", (ev) => {
       if (ev.code !== "Space" || !state.current) return;
       if (/^(TEXTAREA|INPUT|SELECT|BUTTON)$/.test(document.activeElement.tagName)) return;
@@ -2232,6 +2315,7 @@
     renderIdeas();
     freshStart();
     loadDraft();
+    renderVocals();
     wire();
     const vol = localStorage.getItem("yss.vol");
     if (vol != null) { $("vol").value = vol; audio.volume = vol / 100; $("vol").style.setProperty("--p", vol + "%"); }

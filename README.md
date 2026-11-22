@@ -17,10 +17,16 @@ Create walks you through five steps. Only the step you are on is open; the ones 
 1. **What's the song about?** Type an idea and press **Write lyrics**, or press **I have my own lyrics**.
 2. **Lyrics.** Edit the words. To get a different draft, pick a song shape and optional target length, then press **Write lyrics** again.
 3. **Pick the sound.** Choose a quick style, open **Browse more styles**, or describe your own.
-4. **Who sings it?** Choose the **AI singer** or a trained voice. With no voices yet, **Add my voice** records or uploads a reference and trains one.
-5. **Make the song.** Check the recap, pick how many **Takes** you want (1–4), and press **Make the song** (or **Make 3 takes**). Each take is a new performance of the same song: same lyrics, style and singer, with a new melody, arrangement and delivery. Takes render one after another, each is saved to your songs as it finishes, and Cancel stops the rest. When it finishes you get **Listen now**, **Make another take** and **Start a new song**.
+4. **Who sings it?** Choose the **AI singer** or a trained voice. With no voices yet, **Add my voice** records or uploads a reference and trains one. Or switch to **No vocals (instrumental)**.
+5. **Make the song.** Check the recap, pick how many **Takes** you want (1–4), and press **Make the song** (or **Make 3 takes**). Each take is a new performance of the same song: same lyrics, style and singer, with a new melody, arrangement and delivery. When a title is already used, the new song is numbered: "I'm a Roomba Not a Horse", then "I'm a Roomba Not a Horse 2", "… 3" (this applies to takes, remakes and remixes alike). Takes render one after another, each is saved to your songs as it finishes, and Cancel stops the rest. When it finishes you get **Listen now**, **Make another take** and **Start a new song**.
 
 Finished songs are kept in **Listen** with timed lyrics and downloads. Voice-converted songs keep the original AI-singer version too; switch versions in the player.
+
+### Instrumentals, music only and vocals only
+- **Make an instrumental:** press **Instrumental (no lyrics)** in step 1, or pick **No vocals (instrumental)** in step 4. Lyrics are not needed: the guide goes straight to the sound, and steps 1 and 2 show **Skip to the sound**. Anything typed in step 1 becomes the title (e.g. "late night rain" → "Late Night Rain"). YuE2 always sings something (with blank lyrics it makes up its own words), so the app renders the track and then takes the vocals out with the same separator the voice cloning uses. The result is music only, a few seconds slower than a normal song. Your lyrics and singer choice stay saved; **Add vocals back** switches it off.
+- **Split any song:** **Music & vocals** in the player saves the song's music and its vocals as two extra versions (a few seconds, about a minute the first time while the separator loads). Switch between **Full song**, **Music only** and **Vocals only** at the top of the player; the MP3 button downloads the one you are on, and the timed lyrics keep running, so Music only works as karaoke.
+- Songs sung in a trained voice get **Music only** and **Vocals only** automatically, since they are split anyway.
+- With melody planning on (More options), the song's melody score is also saved next to it as `Title_00001.abc`, ready for remixes and covers in a later version.
 
 **Step by step: on/off** (top right of Create) shows every step at once for people who prefer that; the choice is remembered in this browser. The lyrics-writer and song-model pickers are under **Advanced** in steps 1 and 3.
 
@@ -83,7 +89,7 @@ Python 3.10 and the app's pinned CUDA 13.0 PyTorch build are installed into `app
 
 ## Your files are safe
 - App code lives in `app/`. Everything personal is git-ignored and never touched by **Update** or **Reset**:
-  - songs in `app/output/songs/`
+  - songs in `app/output/songs/` (each song's `.mp3` plus its `.lrc`, `.json`, and when present `.abc`, `.ai.mp3`, `.instrumental.mp3` and `.vocals.mp3`; deleting a song deletes all of them)
   - recordings in `app/input/`
   - trained voices in `app/voices/` (each voice is a `.pth`, `.wav` and `.json` with the same name)
   - settings in `app/config.json`, generated on first Install and kept afterward
@@ -176,6 +182,8 @@ curl http://127.0.0.1:YOUR_PORT/api/styles
 Style endpoints: `GET /api/styles` returns `engine_styles` (`yue2` and `ace15`, each with `presets`, `style_library` and `hidden_count`). The save, delete and restore calls return the same thing. `POST /api/styles/restore` takes an optional `name` to bring back a single style. `POST /api/style-ai` takes `idea` (up to 400 characters), `engine` (`yue2` or `ace15`) and an optional `writer`.
 
 `POST /api/lyrics-plan` returns per-section `counts`, `total_lines`, `estimated_seconds`, `target_seconds`, and `limit_seconds`. Send an integer `target_seconds` from 30 to 360, or null/omit it for Auto, plus `memory` (`auto`, `low`, or `standard`). Over-limit targets are rejected; an estimate is not a promised final song duration. The same optional target/memory fields are accepted by `POST /api/lyrics` when starting a draft.
+
+Instrumentals and splits: `POST /api/song` with `"instrumental": true` makes a music-only song (lyrics may be empty). `POST /api/songs/{id}/split` starts a GPU job that saves the song's music and vocals (poll `/api/job`; it returns `job: null` if both already exist). `GET /media/{id}?v=inst` and `?v=vocals` play them (`?v=ai` is the AI singer of a voice-cloned song); `GET /api/songs` reports `has_inst`, `has_vocals`, `has_score` and `instrumental` per song.
 
 Other endpoints: `POST /api/song` accepts lyrics, style, voice and model settings, plus an optional `singer` (`female`, `male`, `duet`, `choir`, or free text such as `"raspy female alto"`; empty keeps whatever singer the style describes); `GET /api/voices` lists your trained voices; `GET /api/voices/{name}/preview` plays a saved reference recording, not a generated singing demo. Use only voices you own or are authorized to use.
 

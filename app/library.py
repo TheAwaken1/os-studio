@@ -58,8 +58,42 @@ def song_path(sid: str) -> str:
 
 
 def sidecar(mp3_path: str, ext: str) -> str:
-    """Path of a file that travels with the song: .lrc, .json or .ai.mp3"""
+    """Path of a file that travels with the song: .lrc, .json, .abc or one of VERSIONS"""
     return mp3_path[:-4] + ext
+
+
+# Other mixes of a song, saved next to it: the AI singer before voice cloning, and the
+# music and voice split apart. The player switches between them with ?v=<key>.
+VERSIONS = {"ai": ".ai.mp3", "inst": ".instrumental.mp3", "vocals": ".vocals.mp3"}
+SIDECARS = (".lrc", ".json", ".abc") + tuple(VERSIONS.values())
+
+
+def is_version_file(name: str) -> bool:
+    return name.lower().endswith(tuple(VERSIONS.values()))
+
+
+def version_path(mp3_path: str, version: str) -> str:
+    """The file for one version of a song; the song itself when that version doesn't exist."""
+    ext = VERSIONS.get(version or "")
+    if ext and os.path.isfile(sidecar(mp3_path, ext)):
+        return sidecar(mp3_path, ext)
+    return mp3_path
+
+
+_VOCAL_PART = re.compile(r"\b(?:vocals?|voices?|singers?|singing|vocalists?|sung|raps?|rapping|rapper|choir|"
+                         r"duet|acapella|a cappella|harmon(?:y|ies)|falsetto|crooner|"
+                         r"(?:soprano|alto|tenor|baritone)(?!\s*(?:sax\w*|horns?|trombones?|clarinets?|flutes?|recorders?|"
+                         r"ukuleles?|guitars?)))\b",
+                         re.IGNORECASE)
+
+
+def instrumental_style(style: str) -> str:
+    """A style prompt with the singer taken out and 'instrumental' put in."""
+    parts = [seg.strip() for seg in (style or "").split(",") if seg.strip()]
+    parts = [seg for seg in parts if not _VOCAL_PART.search(seg) and seg.lower() not in ("instrumental", "no vocals")]
+    at = 1 if parts and len(parts[0].split()) <= 2 and not re.search(r"\d", parts[0]) else 0
+    parts.insert(at, "instrumental")
+    return ", ".join(parts)
 
 
 # ------------------------------------------------------------------ songs
@@ -103,6 +137,10 @@ def describe(mp3_path: str) -> dict:
         "size": st.st_size,
         "has_lrc": lrc_text is not None,
         "has_ai": os.path.isfile(sidecar(mp3_path, ".ai.mp3")),
+        "has_inst": os.path.isfile(sidecar(mp3_path, ".instrumental.mp3")),
+        "has_vocals": os.path.isfile(sidecar(mp3_path, ".vocals.mp3")),
+        "has_score": os.path.isfile(sidecar(mp3_path, ".abc")),
+        "instrumental": bool(meta.get("instrumental")),
         "voice": meta.get("voice") or "",
         "style": meta.get("style") or "",
         "singer": meta.get("singer") or "",
@@ -115,12 +153,23 @@ def describe(mp3_path: str) -> dict:
     }
 
 
+def numbered_title(title: str) -> str:
+    """'Roomba' when it is new, else the next free 'Roomba 2', 'Roomba 3'... so takes and
+    remakes are told apart. Older songs that share a title without numbers count too."""
+    base = re.sub(r"\s+", " ", str(title or "")).strip()
+    if not base:
+        return base
+    pattern = re.compile(r"^" + re.escape(base) + r"(?: (\d+))?$", re.IGNORECASE)
+    taken = [int(m.group(1) or 1) for m in (pattern.match(s["title"]) for s in list_songs()) if m]
+    return f"{base} {max(max(taken), len(taken)) + 1}" if taken else base
+
+
 def list_songs() -> list[dict]:
     songs = []
     for folder, _dirs, files in os.walk(OUTPUT_DIR):
         for name in files:
             low = name.lower()
-            if low.endswith(".mp3") and not low.endswith(".ai.mp3"):
+            if low.endswith(".mp3") and not is_version_file(low):
                 try:
                     songs.append(describe(os.path.join(folder, name)))
                 except OSError:
@@ -137,7 +186,7 @@ def read_lrc(sid: str) -> str:
 
 def delete_song(sid: str) -> None:
     mp3 = song_path(sid)
-    for ext in (".mp3", ".lrc", ".json", ".ai.mp3"):
+    for ext in (".mp3",) + SIDECARS:
         try:
             os.remove(sidecar(mp3, ext))
         except FileNotFoundError:

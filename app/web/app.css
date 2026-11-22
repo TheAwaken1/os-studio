@@ -262,6 +262,18 @@ label input, label select { font-weight: 400; color: var(--text); font-size: 14p
 .input-row { display: flex; gap: 8px; align-items: center; }
 .input-row .icon-btn { height: 42px; width: 42px; }
 
+/* ------------------------------------------------------------ instrumental */
+.inst-only, #composer:not([data-instrumental="true"]) .inst-note { display: none !important; }
+#composer[data-instrumental="true"] .inst-only { display: inline-flex !important; }
+#composer[data-instrumental="true"] :is(.vocal-only, #ideaNext, #ideaChips) { display: none !important; }
+#stepIdea .inst-note { flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 12px; }
+#composer[data-instrumental="true"] .inst-note { display: flex; }
+#composer[data-instrumental="true"] #instHint { display: block; }
+#composer[data-instrumental="true"] :is(#singerType, #voiceInvite, #voiceChips, #voiceHint, #voicePreview) { display: none !important; }
+#lyricsInstNote { flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 14px; }
+.vocals-row { margin-bottom: 14px; }
+.vocals-seg button { height: 34px; font-size: 14px; }
+
 /* ------------------------------------------------------------ takes */
 .takes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
 .takes-label { font-weight: 600; font-size: 14px; }

@@ -187,8 +187,7 @@ class YuE2Sampler:
         style, lyrics = (style or "").strip(), (lyrics or "").strip()
         if not style:
             raise ValueError("style must not be empty")
-        if not lyrics:
-            raise ValueError("lyrics must not be empty")
+        # Blank lyrics = an instrumental; yue2_infer's SongRequest accepts them (OS Studio "No vocals").
         abc_text = (abc or "").strip() or None
         if abc_text and cot == "off":
             raise ValueError("An external ABC score requires cot='melody' or cot='full'")

@@ -79,15 +79,24 @@
         <button class="link step-edit" type="button" data-go="0">Change</button>
       </header>
       <div class="step-body">
+        <div class="remix-banner inst-note">
+          <span>Instrumental: no lyrics needed. Anything you type below becomes the song's title (optional).</span>
+          <button class="link" type="button" data-vocals="on">Add vocals back</button>
+        </div>
         <textarea id="idea" rows="2" spellcheck="true" placeholder="a song about a fluffy cute white shih tzu"></textarea>
         <div class="chips small" id="ideaChips"></div>
         <div class="step-nav always">
-          <button class="btn guide-only" type="button" id="btnOwnLyrics">I have my own lyrics</button>
+          <button class="btn guide-only vocal-only" type="button" id="btnOwnLyrics">I have my own lyrics</button>
+          <button class="btn vocal-only" type="button" id="btnInstrumental" title="Music only: skip the lyrics and go straight to the sound">
+            <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg>
+            <span>Instrumental (no lyrics)</span>
+          </button>
           <span class="spacer"></span>
-          <button class="btn primary" id="btnLyrics">
+          <button class="btn primary vocal-only" id="btnLyrics">
             <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
             <span>Write lyrics</span>
           </button>
+          <button class="btn primary inst-only" type="button" data-skip-sound>Skip to the sound</button>
         </div>
         <p class="hint guide-only" id="ideaNext">Type an idea, then press Write lyrics. The words show up in step 2, where you can change anything.</p>
         <details class="adv">
@@ -108,6 +117,11 @@
         <button class="link step-edit" type="button" data-go="1">Change</button>
       </header>
       <div class="step-body">
+        <div class="remix-banner inst-note" id="lyricsInstNote">
+          <span>Instrumental: these lyrics won't be sung.</span>
+          <button class="btn small primary" type="button" data-skip-sound>Skip to the sound</button>
+          <button class="link" type="button" data-vocals="on">Add vocals back</button>
+        </div>
         <section class="lyrics-guide-step first" aria-labelledby="lyricsEditTitle">
           <h3 id="lyricsEditTitle">Make it yours</h3>
           <p class="hint" id="lyricsEditHint" aria-live="polite">Write or paste your own lyrics here, or use Write lyrics below to start a draft.</p>
@@ -238,6 +252,13 @@
         <button class="link step-edit" type="button" data-go="3">Change</button>
       </header>
       <div class="step-body">
+        <div class="vocals-row">
+          <div class="seg vocals-seg" id="vocalsSeg" role="radiogroup" aria-label="Vocals">
+            <button type="button" role="radio" data-vocals="on">With vocals</button>
+            <button type="button" role="radio" data-vocals="off">No vocals (instrumental)</button>
+          </div>
+        </div>
+        <p class="hint inst-note" id="instHint">Instrumental: the song model makes the track, then the vocals are taken out, so you get the music only. Your lyrics and singer choice stay saved for later.</p>
         <div class="singer-type" id="singerType" hidden role="group" aria-labelledby="singerTypeLabel">
           <strong id="singerTypeLabel">Singer type</strong>
           <div class="chips" id="singerChips"></div>
@@ -379,8 +400,7 @@
             <h3 id="npTitle"></h3>
             <p id="npSub"></p>
             <div class="seg" id="versionSeg" hidden>
-              <button data-v="" class="on">My voice</button>
-              <button data-v="ai">AI singer</button>
+
             </div>
           </div>
           <canvas id="viz" height="96" role="img" aria-label="Live sound bars"></canvas>
@@ -425,6 +445,9 @@
           <div class="row">
             <button class="btn small" type="button" id="btnReuse" title="Start a new song from this one: new take, new lyrics, new sound or new singer">
               <svg viewBox="0 0 24 24"><path d="M4 4v6h6M5.5 15a7 7 0 1 0 .8-8.5L4 10"/></svg><span>Remix this song</span>
+            </button>
+            <button class="btn small" type="button" id="btnSplit" title="Save the music and the vocals of this song as separate tracks">
+              <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg><span>Music &amp; vocals</span>
             </button>
           </div>
           <div class="row">

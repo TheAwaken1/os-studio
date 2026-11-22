@@ -61,7 +61,9 @@ environment otherwise.
    trash button in *Browse & manage styles*) removes one, with Undo. *Make a
    style with AI* has the lyrics writer (Qwen) turn a few words like "dreamy
    late-night R&B" into a style prompt for the song model you picked.
-4. **Who sings it?** — the AI singer, or one of your trained voices.
+4. **Who sings it?** — the AI singer, one of your trained voices, or **No vocals
+   (instrumental)**: the track is made and its vocals are taken out, so no lyrics
+   are needed.
    *New voice* teaches it a voice from 30 s – 3 min of someone talking
    (no music): record it right there with your microphone, or choose a file.
    That takes about 2.5 minutes and happens once per voice. The × on a voice
@@ -73,12 +75,18 @@ environment otherwise.
    lyrics — click any line to jump there. Songs sung in your voice keep the
    AI-singer version too; switch between them in the player.
 
+**Music & vocals** in the player splits any song into *Music only* and *Vocals
+only* versions (a few seconds); voice-cloned songs get them automatically.
+
 *More options* holds the song title, the seed, and melody planning.
 *Remix* on any song loads its lyrics and settings back into the composer.
 
+A second song with the same title is saved as "Title 2", then "Title 3".
+
 Finished songs live in `output\songs\` as `Title_00001.mp3` with a matching
 `.lrc` (timed lyrics), `.json` (the settings used) and, for cloned voices,
-`.ai.mp3` (the original AI singer).
+`.ai.mp3` (the original AI singer). `.instrumental.mp3` / `.vocals.mp3` are the
+split halves, and `.abc` is the melody score when melody planning was on.
 
 ## How long things take (RTX 5080)
 

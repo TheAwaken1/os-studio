@@ -22,8 +22,8 @@
 
     /* What each step still needs before the next one opens; "" when satisfied. */
     missing(index, facts = {}) {
-      if (index === 0 && !facts.idea && !facts.lyrics && !this.ownLyrics) return "Say what the song is about first.";
-      if (index === 1 && !facts.lyrics) return "The song needs lyrics first.";
+      if (index === 0 && !facts.idea && !facts.lyrics && !this.ownLyrics && !facts.instrumental) return "Say what the song is about first.";
+      if (index === 1 && !facts.lyrics && !facts.instrumental) return "The song needs lyrics first.";
       if (index === 2 && !facts.style) return "Pick a sound first.";
       return "";
     }
