@@ -1,0 +1,95 @@
+/* Guided composer: one open step at a time. Cheap to draw: no blur, no looping animation. */
+body[data-mode="create"] main { display: block; max-width: 860px; }
+body[data-mode="create"] .stage { display: none; }
+
+.guide-bar { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; padding: 4px 2px; }
+.guide-bar h2 { font-size: clamp(22px, 3vw, 30px); letter-spacing: -.03em; line-height: 1.15; }
+.guide-bar .hint { margin-top: 4px; }
+#guideToggle { min-height: 44px; border-radius: 999px; }
+#guideToggle[aria-pressed="true"] { color: var(--mint); border-color: var(--mint); background: #172a2b; }
+
+.remix-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px; border-radius: 14px; border: 1px solid rgba(254, 189, 73, .45); background: rgba(254, 189, 73, .08); color: #ffe2a8; font-size: 14px; }
+.remix-banner span { flex: 1; min-width: 200px; overflow-wrap: anywhere; }
+.remix-banner .link { color: var(--text); min-height: 32px; }
+
+/* ------------------------------------------------------------ steps */
+.step-head { min-width: 0; }
+.step-head h2 { flex: none; }
+.step-summary { flex: 1; min-width: 0; color: var(--muted); font-size: 13.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.step-edit { display: none; flex: none; min-height: 32px; color: var(--amber); }
+.step-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.step-nav .btn { min-height: 46px; padding-inline: 20px; }
+.step-nav .btn.primary { font-size: 15px; }
+#ideaNext { margin-top: 10px; }
+
+.composer[data-guided="true"] .step { transition: border-color .15s, opacity .15s; }
+.composer[data-guided="true"] .step[data-state="current"] { border-color: rgba(254, 189, 73, .5); background: rgba(255, 255, 255, .06); }
+.composer[data-guided="true"] .step[data-state="current"] .step-summary { display: none; }
+.composer[data-guided="true"] .step:not([data-state="current"]) { padding-bottom: 18px; }
+.composer[data-guided="true"] .step:not([data-state="current"]) .step-body,
+.composer[data-guided="true"] .step:not([data-state="current"]) .card-head .meta { display: none; }
+.composer[data-guided="true"] .step:not([data-state="current"]) .card-head { margin-bottom: 0; }
+.composer[data-guided="true"] .step[data-state="done"],
+.composer[data-guided="true"] .step[data-state="ahead"] { cursor: pointer; }
+.composer[data-guided="true"] .step[data-state="done"]:hover,
+.composer[data-guided="true"] .step[data-state="ahead"]:hover { border-color: var(--line-2); }
+.composer[data-guided="true"] .step[data-state="done"] .step-edit,
+.composer[data-guided="true"] .step[data-state="ahead"] .step-edit { display: inline-block; }
+.composer[data-guided="true"] .step[data-state="done"] .num {
+  color: transparent;
+  background: #6fe3a5 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.3l2.6 2.6L12 5.5' fill='none' stroke='%23102018' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/18px no-repeat;
+}
+.composer[data-guided="true"] .step[data-state="locked"] { opacity: .45; }
+.composer[data-guided="true"] .step[data-state="locked"] .num { background: var(--faint); }
+.composer[data-guided="false"] .step-nav:not(.always),
+.composer[data-guided="false"] .guide-only,
+.composer[data-guided="false"] .step-summary,
+.composer[data-guided="false"] #guideSub { display: none; }
+
+/* ------------------------------------------------------------ step contents */
+.step-body > .row { margin-top: 12px; }
+.lyrics-guide .lyrics-guide-step.first { margin-top: 0; padding-top: 0; border-top: 0; }
+.lyrics-guide .shape { margin-bottom: 12px; }
+details.adv { margin-top: 14px; }
+details.adv > summary { width: fit-content; cursor: pointer; color: var(--muted); font-size: 13px; padding: 5px 0; }
+details.adv > summary:hover, details.adv[open] > summary { color: var(--text); }
+details.adv[open] > summary { margin-bottom: 8px; }
+details.adv label.inline { flex-wrap: wrap; white-space: normal; }
+details.adv #writerHint, details.adv #songModelHint { margin-top: 8px; }
+
+.voice-invite { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 16px; margin-bottom: 14px; border: 1px dashed rgba(154, 221, 216, .55); border-radius: 14px; background: rgba(154, 221, 216, .06); }
+.voice-invite > div { flex: 1; min-width: 220px; }
+.voice-invite .hint { margin-top: 3px; }
+.voice-invite .btn { min-height: 46px; color: var(--mint); border-color: rgba(154, 221, 216, .55); }
+
+.recap { list-style: none; margin: 0 0 14px; padding: 4px 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(0, 0, 0, .2); }
+.recap li { display: flex; align-items: center; gap: 12px; min-height: 44px; border-top: 1px solid var(--line); }
+.recap li:first-child { border-top: 0; }
+.recap span { flex: none; width: 58px; color: var(--muted); font-size: 13px; }
+.recap b { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recap .link { flex: none; min-height: 32px; color: var(--amber); }
+.step details.options { margin-bottom: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(0, 0, 0, .2); }
+.made { display: grid; gap: 8px; margin-top: 14px; padding: 16px 18px; border: 1px solid rgba(111, 227, 165, .45); border-radius: 14px; background: rgba(111, 227, 165, .07); }
+.made strong { font-size: 17px; overflow-wrap: anywhere; }
+.made .btn { min-height: 46px; }
+
+/* ------------------------------------------------------------ remix dialog */
+#remixDlg { width: min(520px, calc(100vw - 32px)); }
+.remix-choices { display: grid; gap: 10px; }
+.remix-choice { display: grid; gap: 3px; width: 100%; min-height: 64px; padding: 13px 16px; text-align: left; cursor: pointer; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.remix-choice:hover, .remix-choice:focus-visible { border-color: var(--amber); background: rgba(254, 189, 73, .07); }
+.remix-choice strong { font-size: 15.5px; }
+.remix-choice span { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 600px) {
+  .step-head { flex-wrap: wrap; }
+  .step-head h2 { flex: 1; }
+  .step-summary { flex-basis: 100%; order: 5; }
+  .step-nav .btn { flex: 1 1 auto; }
+  .step-nav .spacer { display: none; }
+}
+/* AI singer type picker (step "Who sings it?") */
+.singer-type { display: grid; gap: 10px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); }
+.singer-type > strong { font-size: 14px; }
+.singer-type input[type="text"] { width: 100%; }
+.singer-type .hint:empty { display: none; }

@@ -1,0 +1,65 @@
+STYLE PROMPTS
+Compiled from chat — names removed
+
+Country-trap
+Male country vocal, hard trap 808s, hip-hop rap verses, Southern twang, 140 BPM, goes hard
+
+Memphis drill / hard street
+English hip-hop rap, Memphis drill, harsh male vocal, hard delivery, 808 drums, dark nocturnal mood, storytelling rap, ad-libs brr, short punchy hook
+
+Crunk / Oakland bounce
+English hip-hop rap, crunk bounce, harsh male vocal, hard delivery, whistle hook, 808 drums, club nocturnal mood
+
+Rapid-fire aggressive rap
+English hip-hop rap, rapid-fire male vocal, harsh aggressive delivery, triple-time flow, dense internal rhyme, 808 drums, chaotic nocturnal energy, no chorus needed
+
+Chopper speed rap
+English, male rap, rapid-fire flow, chopper speed, triple-time syllables, harsh delivery, dense internal rhyme, 808 drums, 160 BPM, breathless, sick
+
+Motown emotional R&B
+English, male voice, Motown emotional R&B, high notes, smooth baritone to falsetto, stacked harmonies, piano, warm bass, 74 BPM ballad
+
+Sad late-night ballad
+English, male vocal, fragile almost-whisper, late-night R&B ballad, piano and quiet 808s, breathy high notes, held-back tears, 68 BPM, empty house
+
+Movie trailer orchestra
+Epic cinematic orchestra, movie trailer, massive brass hits, taiko drums, choir, strings ripping, no vocals, 6/8 war march, dark heroic
+
+Horror
+English, whispered male vocal in your ear then a scream, horror orchestra, detuned piano, church organ, trailer brass, wet footsteps, 66 BPM, lights-out
+
+Gangsta trap
+English, male gangsta trap, harsh gravel vocal, hard delivery, drowning 808s, sparse piano, no smile, 140 BPM, rain on the roof, late night
+
+Gospel-trap / church drill
+English, feral male gospel-trap preacher, 808 church, pipe organ over drill hats, choir yelling in the hook, distorted baritone that cracks into a scream, 140 BPM, Sunday morning from hell
+
+Talk-rap / spoken narrative (voice clone)
+English, male talk-rap, almost spoken, flat pitch, no singing, no melody, narrative cadence like telling a story on a porch, clear diction, dry close-mic, sparse 808 and kick only, 86 BPM, vocal in front
+
+Spoken banger (voice clone, no melody)
+English, male spoken rap only, talking not singing, zero melody, no autotune, no hummed hook, flat conversational pitch, hard trap 808s, punchy kick, 92 BPM, vocal dry and in front, street narrative, banger beat under a talking voice
+
+Country (straight)
+English, male country vocal, steel guitar, fiddle, acoustic guitar, warm mid-tempo, heartfelt delivery, 96 BPM, porch and highway
+
+Pop (modern radio)
+English, male pop vocal, clean high notes, catchy hook, bright synths, punchy drums, polished mix, 118 BPM, upbeat and anthemic
+
+Rave / hard dance
+English, male vocal chopped and pitched, hard kick, rolling bass, 140 BPM, dark warehouse energy, hands-up drops, no melody on the verse
+
+Hardcore rock
+English, male aggressive vocal, distorted guitars, fast drums, heavy bass, shouted chorus, 180 BPM, raw and loud
+
+Punk rock
+English, male shouted vocal, three-chord guitars, fast snare, short and mean, 170 BPM, no polish, attitude only
+
+Country-rock
+English, male country vocal, electric guitar crunch, driving drums, Southern rock energy, 120 BPM, whiskey and open road
+
+EDM / festival pop
+English, male vocal, big festival drops, sidechain bass, bright synth leads, sing-along chorus, 128 BPM, summer night energy
+
+Hard rock / metal-adjacent
+English, male gritty vocal, heavy riffs, double-kick drums, dark and powerful, 150 BPM, arena and basement

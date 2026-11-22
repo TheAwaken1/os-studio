@@ -1,0 +1,26 @@
+/* Guided lyrics: scoped to step 2; native details stay collapsed by default. */
+.lyrics-guide .shape { margin-bottom: 0; }
+.lyrics-guide .shape-head { flex-wrap: wrap; gap: 8px; }
+.lyrics-guide .shape-overview { margin: 12px 0 6px; color: var(--text); line-height: 1.8; overflow-wrap: anywhere; }
+.lyrics-guide .lyrics-guide-step { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.lyrics-guide .lyrics-guide-step h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.lyrics-guide .lyrics-guide-step > .hint { margin: 6px 0 12px; }
+.lyrics-guide .lyrics-details { margin-top: 12px; }
+.lyrics-guide .lyrics-details > summary { width: fit-content; cursor: pointer; color: var(--muted); font-size: 13px; padding: 5px 0; }
+.lyrics-guide .lyrics-details > summary:hover { color: var(--text); }
+.lyrics-guide .lyrics-details > summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 4px; border-radius: 3px; }
+.lyrics-guide .lyrics-details[open] > summary { margin-bottom: 10px; color: var(--text); }
+.lyrics-guide .lyrics-details .toolbar { flex-wrap: wrap; }
+.lyrics-guide #lyrics { margin-top: 10px; }
+.lyrics-guide .shape-recommended { margin-left: 7px; color: var(--mint); font-size: 10px; font-weight: 600; }
+.lyrics-guide .chips.small .chip.on { color: var(--ink); }
+.lyrics-guide .chip.on .shape-recommended { color: var(--ink); }
+.lyrics-guide .length-control { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lyrics-guide .length-control > label { margin-bottom: 7px; }
+.lyrics-guide .length-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.lyrics-guide .length-picker > select { width: 140px; min-height: 44px; }
+.lyrics-guide .length-custom { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: 13px; }
+.lyrics-guide .length-custom input { width: 68px; min-height: 44px; padding: 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 10px; color-scheme: dark; }
+.lyrics-guide .length-custom input:focus { outline: 2px solid var(--amber); outline-offset: 2px; }
+.lyrics-guide #lengthHelp { margin-top: 8px; overflow-wrap: anywhere; }
+.lyrics-guide #shapeLines:disabled { opacity: .55; }

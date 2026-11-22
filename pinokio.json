@@ -1,0 +1,11 @@
+{
+  "title": "OS Studio",
+  "description": "Local lyrics, song generation, timed lyrics and your own singing voice. Windows / NVIDIA local edition.",
+  "icon": "icon.svg",
+  "platform": [
+    "win32"
+  ],
+  "gpu": [
+    "nvidia"
+  ]
+}

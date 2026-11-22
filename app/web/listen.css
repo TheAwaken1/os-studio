@@ -1,0 +1,127 @@
+/* Listen surfaces only; playback and visibility belong to app.js.
+   Keep it cheap to draw: the graphics card is busy making songs. No blur, no looping CSS animation. */
+.mode-switch { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 15px; background: #11151c; flex: none; }
+.mode-switch .btn { border-color: transparent; background: transparent; color: var(--muted); min-height: 44px; }
+.mode-switch .btn[aria-pressed="true"] { background: var(--amber); color: var(--ink); }
+
+/* ------------------------------------------------------------ now playing */
+.player { background: #11161e; }
+.player-empty .btn { margin-top: 18px; min-height: 44px; }
+.player-body { gap: 18px; padding: 24px; }
+.hero { display: grid; grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px 22px; }
+.cover, .mini-cover, .song .thumb { background: linear-gradient(135deg, var(--c1, #febd49), var(--c2, #9addd8)); color: var(--ink); }
+.cover { grid-row: 1 / 3; width: 168px; height: 168px; border-radius: 20px; display: grid; place-items: center; overflow: hidden; font-size: 60px; font-weight: 800; letter-spacing: -.05em; line-height: 1; box-shadow: 0 16px 40px #0008; }
+.now { display: block; min-width: 0; overflow-wrap: anywhere; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.player[data-playing="true"] .eyebrow { color: var(--mint); }
+.now h3 { font-size: clamp(24px, 3vw, 38px); letter-spacing: -.03em; line-height: 1.12; margin-top: 4px; }
+.now p#npSub { margin-top: 6px; }
+#versionSeg { width: fit-content; margin-top: 12px; }
+#versionSeg button { min-height: 36px; }
+#viz { width: 100%; height: 72px; align-self: end; background: none; border-radius: 0; }
+
+.scrub { display: grid; gap: 2px; }
+#wave { width: 100%; height: 64px; display: block; cursor: pointer; touch-action: none; border-radius: 10px; }
+.scrub-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 8px; }
+#seek { width: 100%; min-height: 28px; }
+
+.transport { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+.transport .play { width: 68px; height: 68px; background: var(--amber); color: var(--ink); box-shadow: 0 10px 30px rgba(254, 189, 73, .28); }
+.transport .play svg { width: 30px; height: 30px; }
+.transport-skip { width: 50px; height: 50px; border-radius: 50%; }
+.transport-skip svg { width: 22px; height: 22px; }
+.pill-toggle { min-height: 44px; border-radius: 999px; padding-inline: 16px; }
+.pill-toggle[aria-pressed="true"] { color: var(--mint); border-color: var(--mint); background: #172a2b; }
+.transport-break { display: none; }
+.volume { display: inline-flex; align-items: center; gap: 8px; margin-left: 6px; }
+#vol { width: 92px; min-width: 0; min-height: 44px; }
+
+.player-options { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.queue-info { display: grid; gap: 2px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.queue-info:has(#queueMeta:empty):has(#upNext:empty) { display: none; }
+.player-actions .btn { min-height: 44px; }
+
+/* ------------------------------------------------------------ library */
+.library .card-head { flex-wrap: wrap; }
+#btnPlayAll { min-height: 44px; }
+.song .thumb { width: 44px; height: 44px; border: 0; border-radius: 11px; font-weight: 800; font-size: 15px; letter-spacing: -.03em; }
+.song.current .thumb { background: linear-gradient(135deg, var(--c1, #febd49), var(--c2, #9addd8)); box-shadow: 0 0 0 2px var(--amber); }
+.song.current .name { color: var(--amber); }
+.song .acts .remix { padding: 0 10px; font-size: 12.5px; }
+.listen-note { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.listen-note summary { cursor: pointer; color: var(--muted); font-size: 13px; min-height: 28px; }
+.listen-note summary:hover { color: var(--text); }
+.listen-note p { margin-top: 6px; }
+
+/* A solid, cheap-to-render mini player; [hidden] remains authoritative. */
+.mini-player { position: fixed; z-index: 30; bottom: 12px; left: 50%; transform: translateX(-50%); width: min(800px, calc(100% - 24px)); display: flex; align-items: center; gap: 8px; padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px)); border: 1px solid var(--line-2); border-radius: 18px; background: #171c25; box-shadow: 0 8px 28px #0008; overflow: hidden; }
+.mini-player .icon-btn { width: 44px; height: 44px; flex: none; }
+.mini-cover { width: 44px; height: 44px; flex: none; border-radius: 11px; display: grid; place-items: center; font-weight: 800; font-size: 15px; letter-spacing: -.03em; }
+.mini-expand { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; min-width: 0; flex: 1; min-height: 44px; padding: 2px 6px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+#miniTitle, #miniSub { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#miniTitle { font-size: 14px; font-weight: 650; }
+#miniSub { color: var(--muted); font-size: 12px; }
+.mini-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .1); }
+.mini-progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--amber), var(--mint)); }
+body:has(#miniPlayer:not([hidden])) main { padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
+body:has(#miniPlayer:not([hidden])) .toasts { bottom: calc(108px + env(safe-area-inset-bottom, 0px)); }
+
+/* Dedicated mode uses the existing player, never a duplicate audio surface. */
+body[data-mode="listen"] .composer { display: none; }
+body[data-mode="listen"] main { display: block; max-width: 1400px; }
+body[data-mode="listen"] .stage { position: static; height: auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); align-items: start; gap: 20px; }
+body[data-mode="listen"] .player { width: 100%; min-height: 480px; }
+body[data-mode="listen"] .lyrics-view { flex: 1 1 auto; height: clamp(180px, 32vh, 380px); max-height: 380px; }
+body[data-mode="listen"] .library { max-height: calc(100dvh - 130px); min-height: 220px; }
+body[data-mode="listen"] .songs { max-height: 70vh; }
+body[data-mode="listen"] .song { min-height: 64px; }
+body[data-mode="listen"] .song .acts { opacity: 1; }
+body[data-mode="listen"] .song .acts button { min-width: 44px; min-height: 44px; }
+@media (max-width: 1080px) {
+  .top { flex-wrap: wrap; }
+  .top-right { min-width: 0; flex-wrap: wrap; }
+  body[data-mode="listen"] .stage { grid-template-columns: minmax(0, 1fr); }
+  body[data-mode="listen"] .library { max-height: none; }
+  body[data-mode="listen"] .songs { max-height: none; }
+}
+@media (max-width: 720px) {
+  .top { padding: 12px 16px; gap: 10px; }
+  .brand { flex: 1; }
+  .brand > div:last-child { min-width: 0; }
+  .brand h1 { font-size: 17px; }
+  .logo { width: 36px; height: 36px; flex: none; }
+  .mode-switch .btn { padding-inline: 12px; }
+  .top-right { width: 100%; }
+  .top-right .pill { min-width: 0; max-width: 100%; white-space: normal; height: auto; min-height: 34px; }
+  .top-right .gpu { flex-wrap: wrap; }
+  main { padding-inline: 12px; }
+  .player-body { padding: 14px; gap: 12px; }
+  .hero { grid-template-columns: 64px minmax(0, 1fr); grid-template-rows: auto; gap: 10px 12px; align-items: center; }
+  .cover { grid-row: auto; width: 64px; height: 64px; border-radius: 14px; font-size: 24px; box-shadow: none; }
+  .now h3 { font-size: 19px; }
+  .now p#npSub { margin-top: 2px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #versionSeg { margin-top: 8px; }
+  #viz { grid-column: 1 / -1; height: 40px; }
+  #wave { height: 52px; }
+  .transport { gap: 10px; }
+  .transport .play { width: 64px; height: 64px; }
+  .transport-break { display: block; order: 2; flex-basis: 100%; height: 0; }
+  .transport .pill-toggle { order: 3; flex: 1 1 40%; }
+  .volume { display: none; }                       /* phones use their own volume buttons */
+  .player-body > .row, .player-body > .row > .row { flex-wrap: wrap; }
+  .mini-player { gap: 4px; padding-inline: 8px; }
+  .mini-player .play { width: 44px; height: 44px; }
+  body[data-mode="listen"] .stage { gap: 14px; }
+  body[data-mode="listen"] .player { min-height: 0; }
+  body[data-mode="listen"] .lyrics-view { height: 220px; min-height: 140px; max-height: 35dvh; }
+  body[data-mode="listen"] .library { padding: 16px 14px; }
+  body[data-mode="listen"] .song { gap: 8px; }
+}
+@media (max-width: 360px) {
+  .top .brand { flex-basis: 100%; }
+  .transport { gap: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-mode="listen"] .lyrics-view { scroll-behavior: auto; }
+  body[data-mode="listen"] .lyrics-view .line { transition: none; }
+}

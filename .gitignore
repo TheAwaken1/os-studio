@@ -1,0 +1,43 @@
+# Per-user app data (never published)
+app/env/
+app/config.json
+app/my_styles.json
+app/.installed.json
+app/output/
+app/input/
+app/voices/
+app/logs/
+app/models/
+settings.local.json
+
+# Upstream Seed-VC sample clips are fetched on first voice training, not redistributed
+app/engine/song_voice/seed-vc/examples/
+app/engine/song_voice/seed-vc/campplus_cn_common.bin
+app/engine/song_voice/seed-vc/checkpoints/
+
+# Runtime / caches
+app/engine/yue2_repo/.yue2_runtime/
+cache/
+logs/
+backups/
+__pycache__/
+*.pyc
+*.part
+
+# Local packaging artifacts
+source-manifest.json
+verification.json
+
+# Pinokio-generated per-machine files (contain local paths; Pinokio recreates them)
+ENVIRONMENT
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QWEN.md
+.clinerules
+.cursorrules
+.windsurfrules
+.geminiignore
+
+# Raw screen recordings (too big for GitHub; the edited demo is OS-Studio-demo.mp4)
+Recording-of-app-working.mp4

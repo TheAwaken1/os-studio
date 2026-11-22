@@ -1,0 +1,65 @@
+# OS Studio — Python 3.10, Windows, NVIDIA GPU (CUDA 13.0 wheels)
+#
+# Easiest:   setup\setup.bat          (creates .\env and installs all of this)
+# By hand:   pip install -r requirements.txt
+#            pip install whisperx==3.8.6 --no-deps
+#
+# Every version below is the one the app was tested end to end with
+# (lyrics -> song -> timed lyrics -> voice clone -> voice training) on an
+# RTX 5080. The list was produced by scripts_test/dump_deps.py, which runs the
+# whole pipeline and records what it actually imports.
+#
+# whisperx is left out on purpose: it hard-pins torch 2.8 and would replace the
+# CUDA 13.0 build. Install it with --no-deps as shown above. Without it the app
+# still works; lyric timing just falls back to an estimate instead of
+# word-accurate alignment.
+#
+# Do NOT install seed-vc's own requirements (they pin torch 2.4).
+
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+# --- PyTorch (CUDA 13.0 build; RTX 20/30/40/50 series)
+torch==2.10.0+cu130
+torchaudio==2.10.0+cu130
+torchvision==0.25.0+cu130
+triton-windows==3.6.0.post26; sys_platform == "win32"
+
+# --- web app
+fastapi==0.162.4
+uvicorn==0.54.0
+pydantic==2.11.10
+
+# --- models and engine
+numpy==2.2.6
+transformers==4.57.6
+huggingface_hub==0.36.2        # transformers 4.57 needs < 1.0
+tokenizers==0.22.2
+safetensors==0.8.0
+accelerate==1.14.0
+bitsandbytes==0.50.1          # 8-bit / 4-bit lyrics writers
+torchsde==0.2.6               # sampler for the single-file (INT8) song model
+trampoline==0.1.2
+einops==0.8.2
+scipy==1.15.3
+tiktoken==0.14.0
+comfy-kitchen==0.2.40          # used by the vendored ComfyUI core
+comfy-aimdo==0.6.0             # used by the vendored ComfyUI core
+psutil==7.2.2
+pillow==11.3.0
+pyyaml==6.0.3
+tqdm==4.70.0
+
+# --- audio
+soundfile==0.14.0
+librosa==0.11.0
+numba==0.68.0
+av==17.1.0
+lameenc==1.9.0                 # MP3 export
+
+# --- voice clone (Seed-VC)
+munch==4.0.0
+matplotlib==3.10.9
+
+# --- what whisperx needs at runtime for lyric alignment
+nltk==3.10.3
+pandas==2.3.3

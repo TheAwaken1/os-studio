@@ -1,0 +1,65 @@
+STYLE PROMPTS — ACE-Step 1.5
+Same names as style_prompts.txt, rewritten for ACE-Step: say what IS there (genre, voice, instruments, mood, mix), never "no X". A key ("E minor") and BPM in the text are passed to ACE as song settings.
+
+Country-trap
+English, country trap, male vocal with a Southern twang, rap verses and a sung hook, trap 808s, crisp hi-hats, acoustic guitar, banjo accents, hard-hitting, modern mix, 140 BPM, D minor
+
+Memphis drill / hard street
+English, Memphis drill, hip hop, aggressive male rap vocal, hard punchy delivery, sliding 808 bass, drill hi-hats, dark eerie piano, storytelling, ad-libs, short catchy hook, 142 BPM, C# minor
+
+Crunk / Oakland bounce
+English, crunk, Bay Area bounce, hyphy, energetic male rap vocal, shouted hook, whistle synth lead, booming 808s, clap-heavy drums, party energy, club mix, 100 BPM, F minor
+
+Rapid-fire aggressive rap
+English, hip hop, aggressive male rap vocal, rapid-fire triple-time flow, dense rhymes, intense delivery, heavy 808s, trap drums, dark synths, high energy, 150 BPM, G minor
+
+Chopper speed rap
+English, chopper rap, fast male rap vocal, rapid-fire syllables, breathless intense flow, hard trap drums, deep 808 bass, dark orchestral synths, 160 BPM, A minor
+
+Motown emotional R&B
+English, R&B, soul, Motown, emotional male vocal, smooth baritone rising to falsetto, stacked harmonies, piano, warm bass, gentle drums, ballad, warm analog mix, 74 BPM, E minor
+
+Sad late-night ballad
+English, R&B ballad, soft breathy male vocal, intimate and emotional, late night, piano, soft 808s, gentle reverb, sparse arrangement, melancholic, 68 BPM, B minor
+
+Movie trailer orchestra
+Instrumental, epic cinematic orchestral, movie trailer, massive brass, taiko drums, choir, soaring strings, dark heroic war march, huge dynamic build, 6/8, 90 BPM, D minor
+
+Horror
+English, dark cinematic horror, whispered male vocal building to screams, detuned piano, church organ, eerie strings, low brass, tense atmosphere, haunting, 66 BPM, C minor
+
+Gangsta trap
+English, gangsta rap, trap, gritty deep male rap vocal, menacing delivery, heavy distorted 808s, sparse dark piano, rainy late-night mood, 140 BPM, F# minor
+
+Gospel-trap / church drill
+English, gospel trap, drill, powerful male preacher-style vocal, gospel choir hook, pipe organ, drill hi-hats, booming 808s, intense and dramatic, raw emotion, 140 BPM, G minor
+
+Talk-rap / spoken narrative (voice clone)
+English, hip hop, male talk-rap vocal, calm spoken-word storytelling, conversational flow, clear diction, dry close-mic vocal upfront, minimal 808 and kick, laid-back, 86 BPM, A minor
+
+Spoken banger (voice clone, no melody)
+English, trap, male spoken-word rap vocal, talking flow, conversational street storytelling, dry vocal upfront, hard trap 808s, punchy kick, crisp hi-hats, banger beat, 92 BPM, D minor
+
+Country (straight)
+English, country, warm heartfelt male vocal, steel guitar, fiddle, acoustic guitar, mid-tempo, storytelling, Nashville production, 96 BPM, G major
+
+Pop (modern radio)
+English, pop, bright clean male vocal, catchy hook, soaring high notes, bright synths, punchy drums, polished radio mix, upbeat anthemic, 118 BPM, A major
+
+Rave / hard dance
+English, hard dance, rave, chopped pitched male vocal samples, pounding hard kick, rolling bass, dark warehouse energy, euphoric drops, 140 BPM, F minor
+
+Hardcore rock
+English, hardcore, rock, aggressive shouted male vocal, distorted guitars, fast drums, heavy bass, gang vocals chorus, raw loud energy, 180 BPM, E minor
+
+Punk rock
+English, punk rock, shouted male vocal, snotty attitude, fast power chords, driving snare, raw garage production, short and energetic, 170 BPM, A major
+
+Country-rock
+English, Southern rock, country rock, gritty male vocal, crunchy electric guitars, driving drums, open-road energy, 120 BPM, E major
+
+EDM / festival pop
+English, EDM, festival pop, uplifting male vocal, sing-along chorus, big drops, sidechained bass, bright synth leads, euphoric summer energy, 128 BPM, A major
+
+Hard rock / metal-adjacent
+English, hard rock, heavy metal, gritty powerful male vocal, heavy riffs, double-kick drums, dark and powerful, arena sound, 150 BPM, D minor

@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OS Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23febd49'/%3E%3Cpath d='M13 22.5a3 3 0 1 1-2-2.83V9l11-2v11.5a3 3 0 1 1-2-2.83V10.4l-7 1.3z' fill='%23111'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css?v={{v}}">
+<link rel="stylesheet" href="/static/lyrics-guide.css?v={{v}}">
+<link rel="stylesheet" href="/static/listen.css?v={{v}}">
+<link rel="stylesheet" href="/static/guide.css?v={{v}}">
+</head>
+<body data-mode="create">
+<header class="top">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 32"><path d="M13 22.5a3 3 0 1 1-2-2.83V9l11-2v11.5a3 3 0 1 1-2-2.83V10.4l-7 1.3z"/></svg>
+    </div>
+    <div>
+      <h1 title="OS means Open Source">OS Studio</h1>
+      <p>Create. Sing. Listen. · Open-source music models</p>
+    </div>
+  </div>
+  <nav class="mode-switch" aria-label="Studio mode">
+    <button class="btn" type="button" id="modeCreate" aria-pressed="true">Create</button>
+    <button class="btn" type="button" id="modeListen" aria-pressed="false" aria-controls="listeningStage">Listen</button>
+  </nav>
+  <div class="top-right">
+    <div class="pill" id="enginePill" data-state="starting"><i class="dot"></i><span>Starting the engine…</span></div>
+    <div class="pill gpu" id="gpuPill" hidden>
+      <span id="gpuName"></span>
+      <span class="meter"><i id="gpuBar"></i></span>
+      <span id="gpuText"></span>
+    </div>
+    <button class="icon-btn" id="btnFolder" title="Open the songs folder" aria-label="Open the songs folder">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </button>
+    <button class="icon-btn" id="btnLog" title="Activity log" aria-label="Activity log">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<main>
+  <!-- ============================== composer ============================== -->
+  <section class="composer" id="composer" aria-label="Create a song" data-guided="true">
+    <div class="guide-bar">
+      <div>
+        <h2 id="guideTitle">Let's make a song</h2>
+        <p class="hint" id="guideSub">Five quick steps. Finish one and the next opens.</p>
+      </div>
+      <button class="btn small" type="button" id="guideToggle" aria-pressed="true" title="Turn off to see every step at once">Step by step: on</button>
+    </div>
+    <div class="remix-banner" id="remixBanner" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v6h6M5.5 15a7 7 0 1 0 .8-8.5L4 10"/></svg>
+      <span id="remixText"></span>
+      <button class="link" type="button" id="remixStop">Start a brand-new song instead</button>
+    </div>
+
+    <div class="remix-banner" id="resumeBar" hidden>
+      <span id="resumeText"></span>
+      <button class="btn small" type="button" id="resumeGo">Continue that song</button>
+      <button class="link" type="button" id="resumeDrop">Dismiss</button>
+    </div>
+
+    <article class="card step" id="stepIdea" data-step="0">
+      <header class="card-head step-head">
+        <span class="num">1</span><h2>What's the song about?</h2>
+        <span class="step-summary" id="sumIdea"></span>
+        <button class="link step-edit" type="button" data-go="0">Change</button>
+      </header>
+      <div class="step-body">
+        <textarea id="idea" rows="2" spellcheck="true" placeholder="a song about a fluffy cute white shih tzu"></textarea>
+        <div class="chips small" id="ideaChips"></div>
+        <div class="step-nav always">
+          <button class="btn guide-only" type="button" id="btnOwnLyrics">I have my own lyrics</button>
+          <span class="spacer"></span>
+          <button class="btn primary" id="btnLyrics">
+            <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Write lyrics</span>
+          </button>
+        </div>
+        <p class="hint guide-only" id="ideaNext">Type an idea, then press Write lyrics. The words show up in step 2, where you can change anything.</p>
+        <details class="adv">
+          <summary>Advanced: which AI writes the lyrics</summary>
+          <label class="inline" for="writer">Lyrics writer
+            <select id="writer" title="Which model writes the lyrics"></select>
+          </label>
+          <p class="hint" id="writerHint"></p>
+        </details>
+      </div>
+    </article>
+
+    <article class="card step lyrics-guide" id="lyricsCard" data-step="1">
+      <header class="card-head step-head">
+        <span class="num">2</span><h2>Lyrics</h2>
+        <span class="step-summary" id="sumLyrics"></span>
+        <span class="meta" id="lyricsMeta"></span>
+        <button class="link step-edit" type="button" data-go="1">Change</button>
+      </header>
+      <div class="step-body">
+        <section class="lyrics-guide-step first" aria-labelledby="lyricsEditTitle">
+          <h3 id="lyricsEditTitle">Make it yours</h3>
+          <p class="hint" id="lyricsEditHint" aria-live="polite">Write or paste your own lyrics here, or use Write lyrics below to start a draft.</p>
+          <details class="lyrics-details" id="lyricsEditingTools">
+            <summary>Editing tools</summary>
+            <div class="toolbar">
+              <span class="toolbar-label">Insert</span>
+              <button class="tag" data-tag="[intro]">intro</button>
+              <button class="tag" data-tag="[verse]">verse</button>
+              <button class="tag" data-tag="[pre-chorus]">pre-chorus</button>
+              <button class="tag" data-tag="[chorus]">chorus</button>
+              <button class="tag" data-tag="[bridge]">bridge</button>
+              <button class="tag" data-tag="[outro]">outro</button>
+              <span class="spacer"></span>
+              <button class="link" id="btnUndo" hidden>Undo</button>
+              <button class="link" id="btnClear">Clear</button>
+            </div>
+          </details>
+          <textarea id="lyrics" rows="13" spellcheck="true" aria-label="Your lyrics" aria-describedby="lyricsEditHint" placeholder="[verse]&#10;Write the lyrics yourself, paste them in,&#10;or use Write lyrics below.&#10;&#10;[chorus]&#10;…"></textarea>
+        </section>
+        <section class="lyrics-guide-step" aria-labelledby="lyricsWriteTitle">
+          <h3 id="lyricsWriteTitle">Want a different draft?</h3>
+          <p class="hint" id="lyricsWriteHint">Pick a shape and length, then press Write lyrics.</p>
+          <div class="shape" id="shape">
+            <div class="shape-head">
+              <strong>Song shape</strong>
+              <span class="shape-meta" id="shapeMeta"></span>
+            </div>
+            <div class="chips small" id="shapePresets"></div>
+            <p class="shape-overview" id="shapeOverview" aria-label="Song sections in order"></p>
+            <p class="hint" id="shapeApplyHint">This shape applies to the next Write lyrics. It does not rearrange existing lyrics.</p>
+            <div class="length-control">
+              <label for="targetLength">Target song length</label>
+              <div class="length-picker">
+                <select id="targetLength" aria-describedby="lengthHelp">
+                  <option value="auto">Auto</option>
+                  <option value="60">1 min</option>
+                  <option value="120">2 min</option>
+                  <option value="180">3 min</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <span id="lengthCustom" class="length-custom" role="group" aria-label="Custom target length" hidden>
+                  <input id="lengthMinutes" type="number" min="0" max="6" step="1" inputmode="numeric" value="2" aria-label="Target minutes" aria-describedby="lengthHelp"><span>min</span>
+                  <input id="lengthSeconds" type="number" min="0" max="59" step="1" inputmode="numeric" value="30" aria-label="Target seconds" aria-describedby="lengthHelp"><span>sec</span>
+                </span>
+              </div>
+              <p class="hint" id="lengthHelp" role="status" aria-live="polite">Auto uses your song shape. A target guides the next lyrics draft; it does not change existing words or guarantee an exact duration.</p>
+            </div>
+            <details class="lyrics-details" id="shapeCustomize">
+              <summary>Customize structure</summary>
+              <div class="shape-seq" id="shapeSeq" aria-label="Sections in order"></div>
+              <div class="shape-row">
+                <span class="toolbar-label">Add</span>
+                <span class="shape-add" id="shapeAdd"></span>
+              </div>
+              <p class="hint" id="shapeHint">Drag a section to move it. The lyrics writer follows this order.</p>
+              <div class="shape-row">
+                <label class="shape-lines" for="shapeLines">Lines per section</label>
+                <select id="shapeLines">
+                  <option value="2">2</option><option value="4">4</option>
+                  <option value="6">6</option><option value="8">8</option>
+                </select>
+              </div>
+            </details>
+          </div>
+          <button class="btn" id="btnLyrics2">
+            <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Write lyrics</span>
+          </button>
+        </section>
+        <div class="step-nav">
+          <button class="btn" type="button" data-guide="back">Back</button>
+          <span class="spacer"></span>
+          <button class="btn primary" type="button" data-guide="next">Next: pick the sound</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="card step" id="stepStyle" data-step="2">
+      <header class="card-head step-head">
+        <span class="num">3</span><h2>Pick the sound</h2>
+        <span class="step-summary" id="sumStyle"></span>
+        <button class="link step-edit" type="button" data-go="2">Change</button>
+      </header>
+      <div class="step-body">
+        <div class="chips" id="styleChips"></div>
+        <div class="style-browse-row">
+          <button class="btn small" id="btnBrowseStyles" type="button">Browse &amp; manage styles</button>
+          <span class="hint" id="styleSelection" aria-live="polite"></span>
+          <button class="link danger-link" id="btnDeleteStyle" type="button" hidden>Delete this style</button>
+        </div>
+        <p class="hint warn" id="styleWarning" hidden>This prompt asks for no vocals. Choose a vocal style if you want your lyrics sung.</p>
+        <textarea id="style" rows="2" spellcheck="false" placeholder="Describe the sound: language, genre, vocals, instruments, tempo"></textarea>
+        <div class="style-save" id="styleSaveRow" hidden>
+          <input id="styleSaveName" type="text" maxlength="60" spellcheck="false" placeholder="Name it, e.g. Night drive" aria-label="Name for this style">
+          <button class="btn small" id="btnSaveStyle" type="button">Save to my styles</button>
+        </div>
+        <div class="style-ai">
+          <strong>Make a style with AI</strong>
+          <p class="hint" id="styleAIHint">Say the vibe in your own words. The lyrics writer (Qwen) turns it into a style prompt worded for the song model you picked.</p>
+          <div class="style-ai-row">
+            <input id="styleIdea" type="text" maxlength="400" placeholder="e.g. dreamy late-night R&amp;B with a soft female singer" aria-label="Describe the sound you want">
+            <button class="btn" id="btnStyleAI" type="button">
+              <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+              <span>Make style</span>
+            </button>
+          </div>
+        </div>
+        <details class="adv">
+          <summary>Advanced: which AI makes the music</summary>
+          <label class="inline" for="songModel">Song model
+            <select id="songModel" title="Which model makes the music"></select>
+          </label>
+          <p class="hint" id="songModelHint"></p>
+        </details>
+        <div class="step-nav">
+          <button class="btn" type="button" data-guide="back">Back</button>
+          <span class="spacer"></span>
+          <button class="btn primary" type="button" data-guide="next">Next: pick the singer</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="card step" id="stepVoice" data-step="3">
+      <header class="card-head step-head">
+        <span class="num">4</span><h2>Who sings it?</h2>
+        <span class="step-summary" id="sumVoice"></span>
+        <button class="link step-edit" type="button" data-go="3">Change</button>
+      </header>
+      <div class="step-body">
+        <div class="singer-type" id="singerType" hidden role="group" aria-labelledby="singerTypeLabel">
+          <strong id="singerTypeLabel">Singer type</strong>
+          <div class="chips" id="singerChips"></div>
+          <input id="singerCustom" type="text" maxlength="80" spellcheck="false" hidden
+                 placeholder="Describe the singer, e.g. raspy female alto, deep male baritone, young boy, soulful woman"
+                 aria-label="Describe the singer">
+          <p class="hint" id="singerHint"></p>
+        </div>
+        <div class="voice-invite" id="voiceInvite" hidden>
+          <div>
+            <strong>Want to hear it in your own voice?</strong>
+            <p class="hint">Record about 30 seconds of yourself talking. The app learns your voice once, then any song can be sung as you.</p>
+          </div>
+          <button class="btn" type="button" id="btnVoiceInvite">
+            <svg viewBox="0 0 24 24"><path d="M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v3"/></svg>
+            <span>Add my voice</span>
+          </button>
+        </div>
+        <div class="chips" id="voiceChips"></div>
+        <p class="hint" id="voiceHint"></p>
+        <div class="voice-preview" id="voicePreview" hidden>
+          <div class="row between"><strong id="voicePreviewName"></strong><button class="link" type="button" id="voicePreviewClose">Close</button></div>
+          <p class="hint">Saved recording · this is the reference voice, not a generated singing demo.</p>
+          <audio id="voiceAudio" controls preload="none" aria-label="Saved voice recording"></audio>
+        </div>
+        <div class="step-nav">
+          <button class="btn" type="button" data-guide="back">Back</button>
+          <span class="spacer"></span>
+          <button class="btn primary" type="button" data-guide="next">Next: make the song</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="card step" id="stepMake" data-step="4">
+      <header class="card-head step-head">
+        <span class="num">5</span><h2>Make the song</h2>
+        <span class="step-summary" id="sumMake"></span>
+        <button class="link step-edit" type="button" data-go="4">Open</button>
+      </header>
+      <div class="step-body">
+        <ul class="recap guide-only" id="recap" aria-label="Your song so far">
+          <li><span>Lyrics</span><b id="recapLyrics"></b><button class="link" type="button" data-go="1">Change</button></li>
+          <li><span>Sound</span><b id="recapStyle"></b><button class="link" type="button" data-go="2">Change</button></li>
+          <li><span>Singer</span><b id="recapVoice"></b><button class="link" type="button" data-go="3">Change</button></li>
+        </ul>
+        <details class="options" id="options">
+          <summary>More options</summary>
+          <div class="grid3">
+            <label>Song title
+              <input id="title" type="text" placeholder="Picked from the lyrics" maxlength="80">
+            </label>
+            <label>Seed
+              <span class="input-row">
+                <input id="seed" type="text" inputmode="numeric" placeholder="Random each time">
+                <button class="icon-btn small" id="btnSeedClear" title="Back to random" aria-label="Back to random">
+                  <svg viewBox="0 0 24 24"><path d="M4 4v6h6M20 20v-6h-6M5.5 15a7 7 0 0 0 12.2 2.5M18.5 9A7 7 0 0 0 6.3 6.5"/></svg>
+                </button>
+              </span>
+            </label>
+            <label>Melody planning
+              <select id="cot">
+                <option value="off">Off (best for rap)</option>
+                <option value="melody">Melody</option>
+                <option value="full">Melody + structure</option>
+              </select>
+            </label>
+            <label>Graphics memory
+              <select id="memory">
+                <option value="auto">Auto</option>
+                <option value="standard">Standard · songs up to 6 min</option>
+                <option value="low">Low · songs up to 3 min</option>
+              </select>
+            </label>
+          </div>
+          <p class="hint options-hint">Low memory saves about 1 GB of graphics memory by capping how long a song can get. Auto picks it on cards under 14 GB.</p>
+        </details>
+
+        <div class="action" id="action">
+          <button class="btn primary big" id="btnMake">
+            <svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>
+            <span>Make the song</span>
+          </button>
+          <div class="progress" id="progress" hidden>
+            <div class="progress-head">
+              <strong id="progLabel">Starting…</strong>
+              <span class="progress-nums"><span id="progTime">0:00</span><b id="progPct">0%</b></span>
+            </div>
+            <div class="bar"><i id="progBar"></i></div>
+            <ol class="steps" id="progSteps"></ol>
+            <div class="row between">
+              <span class="hint" id="progNote">You can keep this window in the background.</span>
+              <button class="btn small" id="btnCancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div class="made" id="made" hidden role="status">
+          <strong id="madeTitle"></strong>
+          <p class="hint">It is saved in your songs. What next?</p>
+          <div class="row wrap">
+            <button class="btn primary" type="button" id="madeListen">
+              <svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg><span>Listen now</span>
+            </button>
+            <button class="btn" type="button" id="madeAgain">Make it again (new take)</button>
+            <button class="btn" type="button" id="madeNew">Start a new song</button>
+          </div>
+        </div>
+        <div class="step-nav">
+          <button class="btn" type="button" data-guide="back">Back</button>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ============================== stage ============================== -->
+  <section class="stage" id="listeningStage" aria-label="Listen" tabindex="-1">
+    <article class="card player" id="player" data-empty="true">
+      <div class="player-empty">
+        <div class="disc" aria-hidden="true"></div>
+        <h3>Your song plays here</h3>
+        <p>Pick a song from your list, or make your first one.</p>
+        <button class="btn primary" type="button" id="emptyCreate">Create a song</button>
+      </div>
+
+      <div class="player-body">
+        <div class="hero">
+          <div class="cover" id="npCover" aria-hidden="true"><span id="npCoverText"></span></div>
+          <div class="now">
+            <p class="eyebrow" id="npState">Ready to play</p>
+            <h3 id="npTitle"></h3>
+            <p id="npSub"></p>
+            <div class="seg" id="versionSeg" hidden>
+              <button data-v="" class="on">My voice</button>
+              <button data-v="ai">AI singer</button>
+            </div>
+          </div>
+          <canvas id="viz" height="96" role="img" aria-label="Live sound bars"></canvas>
+        </div>
+
+        <div class="scrub">
+          <canvas id="wave" height="64" role="img" aria-label="Song waveform. Click or drag to jump; the slider below does the same."></canvas>
+          <div class="scrub-row">
+            <span class="time" id="tCur">0:00</span>
+            <input type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+            <span class="time" id="tDur">0:00</span>
+          </div>
+        </div>
+
+        <div class="transport">
+          <button class="btn small pill-toggle" type="button" id="btnShuffle" aria-pressed="false">Shuffle</button>
+          <button class="icon-btn transport-skip" type="button" id="btnPrev" aria-label="Previous song"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M19 5l-10 7 10 7z"/></svg></button>
+          <button class="play" id="btnPlay" aria-label="Play">
+            <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>
+            <svg class="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+          </button>
+          <button class="icon-btn transport-skip" type="button" id="btnNext" aria-label="Next song"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M5 5l10 7-10 7z"/></svg></button>
+          <button class="btn small pill-toggle" type="button" id="btnRepeat" aria-label="Repeat mode: repeat all">Repeat all</button>
+          <span class="transport-break" aria-hidden="true"></span>
+          <span class="volume">
+            <svg class="vol-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 0 1 0 6"/></svg>
+            <input type="range" id="vol" min="0" max="100" value="100" aria-label="Volume">
+          </span>
+        </div>
+
+        <div class="player-options" role="group" aria-label="Queue options">
+          <button class="btn small pill-toggle" type="button" id="btnContinuous" aria-pressed="true">Continuous</button>
+          <div class="queue-info">
+            <p class="hint" id="queueMeta" role="status" aria-live="polite"></p>
+            <p class="hint" id="upNext"></p>
+          </div>
+        </div>
+
+        <div class="lyrics-view" id="lyricsView"></div>
+
+        <div class="row between wrap player-actions">
+          <div class="row">
+            <button class="btn small" type="button" id="btnReuse" title="Start a new song from this one: new take, new lyrics, new sound or new singer">
+              <svg viewBox="0 0 24 24"><path d="M4 4v6h6M5.5 15a7 7 0 1 0 .8-8.5L4 10"/></svg><span>Remix this song</span>
+            </button>
+          </div>
+          <div class="row">
+            <a class="btn small" id="dlMp3" download>
+              <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>MP3</span>
+            </a>
+            <a class="btn small" id="dlLrc" download>
+              <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>Lyrics (.lrc)</span>
+            </a>
+            <button class="btn small" id="btnShow" title="Show the file in Explorer">
+              <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Show file</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="card library">
+      <header class="card-head"><h2>Your songs</h2><span class="meta" id="libCount"></span><button class="btn small" type="button" id="btnPlayAll" aria-label="Play all songs">Play all</button></header>
+      <ul class="songs" id="songs"></ul>
+      <p class="hint" id="libEmpty" hidden>Nothing here yet. Your finished songs are kept in this list.</p>
+      <details class="listen-note">
+        <summary>Listening on your phone?</summary>
+        <p class="hint">To listen on your phone, turn on Remote in Pinokio, then scan the QR code with your phone (or open the https link) and open OS Studio. Music streams from this PC, so keep it awake with OS Studio running.</p>
+      </details>
+    </article>
+  </section>
+</main>
+
+<!-- ============================== remix ============================== -->
+<dialog id="remixDlg" aria-labelledby="remixTitle">
+  <div class="dlg">
+    <header><h2 id="remixTitle">Remix this song</h2>
+      <button class="icon-btn small" type="button" id="remixClose" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <p class="hint" id="remixHint">Start a new song from this one. The original stays in your songs.</p>
+    <div class="remix-choices">
+      <button type="button" class="remix-choice" data-remix="take"><strong>New take</strong><span>Same lyrics, same sound, same singer. A fresh performance.</span></button>
+      <button type="button" class="remix-choice" data-remix="lyrics"><strong>Change the lyrics</strong><span>Keep the sound and singer, edit or rewrite the words.</span></button>
+      <button type="button" class="remix-choice" data-remix="style"><strong>Change the sound</strong><span>Same lyrics in a different style.</span></button>
+      <button type="button" class="remix-choice" data-remix="voice"><strong>Change the singer</strong><span>Same song, sung by a different voice.</span></button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============================== style library ============================== -->
+<dialog id="styleDlg" aria-labelledby="styleDlgTitle">
+  <div class="dlg">
+    <header><h2 id="styleDlgTitle">Find your sound</h2><button class="btn small" type="button" id="styleClose">Done</button></header>
+    <p class="hint">Choose a starting point — you can edit the full prompt back in step 3. Use the trash button to delete a style you never want to see.</p>
+    <label for="styleSearch">Search styles<input id="styleSearch" type="text" placeholder="Try 808, Motown, spoken, piano…"></label>
+    <label for="styleCategory">Category<select id="styleCategory"><option value="">All styles</option></select></label>
+    <p class="hint" id="styleCount" aria-live="polite"></p>
+    <div id="styleResults" class="style-results"></div>
+    <p class="hint style-restore" id="styleRestoreRow" hidden><span id="styleRestoreText"></span> <button class="link" type="button" id="btnRestoreStyles">Bring them back</button></p>
+  </div>
+</dialog>
+
+<!-- ============================== new voice ============================== -->
+<dialog id="voiceDlg">
+  <form method="dialog" class="dlg" id="voiceForm">
+    <header><h2>Teach it your voice</h2>
+      <button class="icon-btn small" value="close" aria-label="Close" id="voiceClose">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <p class="hint" id="voiceClipHint">Use a recording of one person talking — 30 seconds to 3 minutes, no music in the background. Training takes a few minutes and only happens once per voice.</p>
+    <label for="voiceRecordingType">Reference recording type
+      <select id="voiceRecordingType" aria-describedby="voiceRecordingTypeHelp">
+        <option value="talking">Talking</option>
+        <option value="singing">Singing</option>
+        <option value="rapping">Rapping</option>
+      </select>
+    </label>
+    <p class="hint" id="voiceRecordingTypeHelp">This describes the reference recording, not the song genre. Talking applies speech-to-song pitch correction; singing and rapping skip that extra correction and share the same performance-reference path.</p>
+    <div class="rec" id="rec">
+      <div class="rec-row">
+        <button class="btn rec-btn" type="button" id="recBtn"><i class="rec-dot"></i><span>Record my voice</span></button>
+        <span class="rec-time" id="recTime" hidden>0:00</span>
+        <div class="rec-meter" id="recMeter" hidden><i></i></div>
+      </div>
+      <p class="hint" id="recHint">Uses your microphone. Talk normally for 30 seconds or more.</p>
+      <blockquote class="rec-script" id="recScript" hidden>
+        Nothing to say? Read this out loud, the way you normally talk:<br><br>
+        “Hi, this is my voice. I'm recording this so my computer can learn how I sound.
+        Most mornings start the same way: coffee first, then I check the weather and decide whether it's a
+        jacket day. I like music I can hum along to, long drives with the windows down, and food that's a
+        little too spicy. If I could pick one superpower it would be never having to look for my keys again.
+        The quick brown fox jumps over the lazy dog, and somewhere a zebra is questioning every choice it made.
+        Okay, that should be plenty. Thanks for listening, and let's go make a song.”
+      </blockquote>
+      <audio id="recPlay" controls hidden></audio>
+    </div>
+    <div class="or"><span>or use a file</span></div>
+    <label class="drop" id="drop">
+      <input type="file" id="clip" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a">
+      <svg viewBox="0 0 24 24"><path d="M12 16V5m0 0l-4 4m4-4l4 4M5 19h14"/></svg>
+      <span id="dropText">Choose a recording, or drop it here</span>
+    </label>
+    <label>Name this voice
+      <input id="voiceName" type="text" placeholder="e.g. my voice" maxlength="40">
+    </label>
+    <p class="error" id="voiceError" hidden></p>
+    <div class="progress" id="voiceProgress" hidden>
+      <div class="progress-head"><strong id="vpLabel">Starting…</strong>
+        <span class="progress-nums"><span id="vpTime">0:00</span><b id="vpPct">0%</b></span></div>
+      <div class="bar"><i id="vpBar"></i></div>
+    </div>
+    <footer>
+      <button class="btn" type="button" id="voiceCancel">Cancel</button>
+      <button class="btn primary" type="button" id="voiceTrain">Learn this voice</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============================== delete a voice ============================== -->
+<dialog id="delVoiceDlg">
+  <form method="dialog" class="dlg">
+    <header><h2>Delete this voice?</h2></header>
+    <p id="delVoiceText"></p>
+    <p class="error" id="delVoiceError" hidden></p>
+    <footer>
+      <button class="btn" type="button" id="delVoiceCancel">Keep it</button>
+      <button class="btn danger" type="button" id="delVoiceOk">Delete voice</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============================== activity log ============================== -->
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <header><h2>Activity log</h2>
+    <button class="icon-btn small" id="drawerClose" aria-label="Close">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <pre id="log"></pre>
+</aside>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<aside class="mini-player" id="miniPlayer" aria-label="Mini player" hidden>
+  <span class="mini-cover" id="miniCover" aria-hidden="true"></span>
+  <button class="mini-expand" type="button" id="miniExpand" aria-label="Open full player" aria-controls="listeningStage">
+    <span id="miniTitle">Your song</span>
+    <span id="miniSub">Open full player</span>
+  </button>
+  <button class="icon-btn" type="button" id="miniPrev" aria-label="Previous song"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M19 5l-10 7 10 7z"/></svg></button>
+  <button class="play" type="button" id="miniPlay" aria-label="Play">
+    <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+    <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+  </button>
+  <button class="icon-btn" type="button" id="miniNext" aria-label="Next song"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M5 5l10 7-10 7z"/></svg></button>
+  <span class="mini-progress" aria-hidden="true"><i id="miniBar"></i></span>
+</aside>
+<audio id="audio" preload="auto" playsinline></audio>
+<script src="/static/player-core.js?v={{v}}"></script>
+<script src="/static/length-ui.js?v={{v}}"></script>
+<script src="/static/guide-core.js?v={{v}}"></script>
+<script src="/static/app.js?v={{v}}"></script>
+</body>
+</html>
