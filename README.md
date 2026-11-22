@@ -1,5 +1,11 @@
 # OS Studio — Pinokio launcher
 
+
+
+https://github.com/user-attachments/assets/fbbdc2db-596c-4fd4-9fa3-b6920026a5d9
+
+
+
 **OS Studio**: OS means Open Source. Create. Sing. Listen. with open-source song models: **YuE2** (default) and **ACE-Step 1.5** (experimental, lower quality). The name does not replace the model/dependency licenses described below.
 
 Windows or Linux, NVIDIA 8 GB+. Write lyrics, create a song, sync lyrics, and re-sing it using a voice you have permission to use.
