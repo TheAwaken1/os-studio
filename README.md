@@ -2,7 +2,7 @@
 
 **OS Studio**: OS means Open Source. Create. Sing. Listen. with open-source song models: **YuE2** (default) and **ACE-Step 1.5** (experimental, lower quality). The name does not replace the model/dependency licenses described below.
 
-Windows / NVIDIA. Write lyrics, create a song, sync lyrics, and re-sing it using a voice you have permission to use.
+Windows or Linux, NVIDIA 8 GB+. Write lyrics, create a song, sync lyrics, and re-sing it using a voice you have permission to use.
 
 OS Studio has two modes: **Create** for making music and **Listen** for playing your saved songs. The composer includes a guided lyrics editor, target-length controls, a searchable style library, microphone recording, and saved voice-reference previews. The player supports a continuous queue, shuffle/repeat, a mini-player, and supported phone lock-screen controls.
 
@@ -79,7 +79,7 @@ Use the separate listen button next to a saved voice in Step 4. It opens the voi
 **This preview is the original reference recording, not a generated singing demo or a guarantee of cloning quality.** Close the preview to return to the composer. Deleting a shared trained voice affects the other apps that use the same voice folder; see the file-safety notes below.
 
 ## Requirements and installation details
-Python 3.10 and the app's pinned CUDA 13.0 PyTorch build are installed into `app/env`. The original project's environment is not used or copied. Optional `uv_executable` and `uv_cache_dir` keys in the ignored `settings.local.json` can reuse an existing compatible UV package cache during installation; packages are copied into the isolated environment (`UV_LINK_MODE=copy`), not shared with the original app at runtime. Without these keys, Pinokio's managed UV and cache are used. This is a Windows/NVIDIA package; it has not been validated on Linux, macOS, AMD, or CPU-only machines. Hardware requirements depend on model selection; the INT8 option is the smaller-card route.
+Python 3.10 and the app's pinned CUDA 13.0 PyTorch build are installed into `app/env`. The original project's environment is not used or copied. Optional `uv_executable` and `uv_cache_dir` keys in the ignored `settings.local.json` can reuse an existing compatible UV package cache during installation; packages are copied into the isolated environment (`UV_LINK_MODE=copy`), not shared with the original app at runtime. Without these keys, Pinokio's managed UV and cache are used. Runs on **Windows and Linux with an NVIDIA card**. Linux was tested on Ubuntu 24.04 (WSL2, RTX 5080): a fresh install, lyrics, a song, and a song in a cloned voice all worked. On Linux, *Show file* opens the songs folder with `xdg-open`; without a desktop it tells you where the folder is instead. macOS, AMD and CPU-only machines are not supported: the song engine needs CUDA. Hardware requirements depend on model selection; the INT8 option is the smaller-card route.
 
 ## Your files are safe
 - App code lives in `app/`. Everything personal is git-ignored and never touched by **Update** or **Reset**:

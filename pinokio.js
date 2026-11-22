@@ -2,10 +2,11 @@
 module.exports = {
   version: "8.0",
   title: "OS Studio",
-  description: "Write lyrics, make songs, and sing them in your own voice. Windows / NVIDIA.",
+  description: "Write lyrics, make songs, and sing them in your own voice. Windows / Linux, NVIDIA.",
   icon: "icon.svg",
   menu: async (kernel, info) => {
-    const installed = info.exists("app/env/Scripts/python.exe") && info.exists("app/.installed.json");
+    const envPython = process.platform === "win32" ? "app/env/Scripts/python.exe" : "app/env/bin/python";
+    const installed = info.exists(envPython) && info.exists("app/.installed.json");
     for (const [script, text] of [["install.js", "Installing"], ["update.js", "Updating"], ["reset.js", "Resetting dependencies"], ["download.js", "Downloading models"]]) {
       if (info.running(script)) return [{ default: true, icon: "fa-solid fa-terminal", text, href: script }];
     }

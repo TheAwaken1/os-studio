@@ -1,9 +1,10 @@
 {
   "title": "OS Studio",
-  "description": "Local lyrics, song generation, timed lyrics and your own singing voice. Windows / NVIDIA local edition.",
+  "description": "Local lyrics, song generation, timed lyrics and your own singing voice. Windows / Linux, NVIDIA.",
   "icon": "icon.svg",
   "platform": [
-    "win32"
+    "win32",
+    "linux"
   ],
   "gpu": [
     "nvidia"

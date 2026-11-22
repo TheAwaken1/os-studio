@@ -651,13 +651,35 @@ def api_delete_voice(name: str):
 def api_open_folder(sid: str = ""):
     try:
         if sid:
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(library.song_path(sid))])
+            target = os.path.normpath(library.song_path(sid))
+            if not os.path.exists(target):
+                raise FileNotFoundError(target)
         else:
             os.makedirs(library.OUTPUT_DIR, exist_ok=True)
-            os.startfile(library.OUTPUT_DIR)  # noqa: S606 (local desktop app)
+            target = library.OUTPUT_DIR
+        _reveal(target)
     except FileNotFoundError:
         raise HTTPException(404, "That song is no longer on disk.") from None
+    except OSError:
+        raise HTTPException(501, f"Couldn't open a file browser on this PC. Your songs are in {library.OUTPUT_DIR}") from None
     return {"ok": True}
+
+
+def _reveal(path: str) -> None:
+    """Show a file (selected) or folder in the system file browser."""
+    if sys.platform == "win32":
+        if os.path.isdir(path):
+            os.startfile(path)  # noqa: S606 (local desktop app)
+        else:
+            subprocess.Popen(["explorer", "/select,", path])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", path] if os.path.isfile(path) else ["open", path])
+    else:                                   # Linux: file managers can't select, so open the folder
+        opener = shutil.which("xdg-open")
+        if not opener:
+            raise OSError("xdg-open not found")
+        subprocess.Popen([opener, path if os.path.isdir(path) else os.path.dirname(path)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # ------------------------------------------------------------------ launch

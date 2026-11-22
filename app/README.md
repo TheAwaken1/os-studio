@@ -18,7 +18,7 @@ node graph.
 
 ## Requirements
 
-- Windows, NVIDIA GPU. Pick the song model in step 3 (Auto does it for you):
+- Windows or Linux, NVIDIA GPU. Pick the song model in step 3 (Auto does it for you):
   - **12 GB and up:** *YuE2 3B · full* — 10.6 GB peak, a 100 s song in about 55 s.
   - **8 GB:** *YuE2 3B · INT8* (`yue2_3b_int8_convrot.safetensors` in
     `models\checkpoints`, 3.7 GB, downloaded on first use if missing) — 4.5 GB
