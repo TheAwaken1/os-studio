@@ -460,6 +460,9 @@
             <button class="btn small" type="button" id="btnReuse" title="Start a new song from this one: new take, new lyrics, new sound or new singer">
               <svg viewBox="0 0 24 24"><path d="M4 4v6h6M5.5 15a7 7 0 1 0 .8-8.5L4 10"/></svg><span>Remix this song</span>
             </button>
+            <button class="btn small" type="button" id="btnReclone" title="Re-sing this song in your voice or tune the vocal mix (without regenerating the song)">
+              <svg viewBox="0 0 24 24"><path d="M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v3"/></svg><span>Re-clone voice</span>
+            </button>
             <button class="btn small" type="button" id="btnSplit" title="Save the music and the vocals of this song as separate tracks">
               <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg><span>Music &amp; vocals</span>
             </button>
@@ -618,6 +621,81 @@
     <footer>
       <button class="btn" type="button" id="coverCancel">Cancel</button>
       <button class="btn primary" type="button" id="coverGo">Listen to the song</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============================== re-clone voice ============================== -->
+<dialog id="recloneDlg" aria-labelledby="recloneTitle">
+  <form method="dialog" class="dlg">
+    <header><h2 id="recloneTitle">Re-clone voice</h2>
+      <button class="icon-btn small" value="close" aria-label="Close" id="rcClose">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <p class="hint" id="rcHint">Re-sings this song from its original AI take using cleaner vocal separation and studio mix polish. The AI singer version is always kept.</p>
+    <label for="rcVoice">Voice
+      <select id="rcVoice"></select>
+    </label>
+    <label class="rc-check">
+      <input type="checkbox" id="rcKeepBacking" checked>
+      <span>Keep chorus harmonies &amp; backing vocals (lead-only clone)</span>
+    </label>
+    <p class="hint small rc-sub">Separates lead vocals from chorus harmonies so choruses stay crisp and full instead of turning muddy.</p>
+    <div class="rc-grid">
+      <label>Vocal volume <span class="rc-val" id="rcVocalGainVal">0.0 dB</span>
+        <input type="range" id="rcVocalGain" min="-6" max="6" step="0.5" value="0">
+      </label>
+      <label>Studio reverb <span class="rc-val" id="rcReverbVal">18%</span>
+        <input type="range" id="rcReverb" min="0" max="0.6" step="0.02" value="0.18">
+      </label>
+      <label id="rcBackingWrap">Chorus harmonies <span class="rc-val" id="rcBackingGainVal">-1.5 dB</span>
+        <input type="range" id="rcBackingGain" min="-12" max="3" step="0.5" value="-1.5">
+      </label>
+      <label class="rc-check rc-polish">
+        <input type="checkbox" id="rcPolish" checked>
+        <span>Studio EQ &amp; compression</span>
+      </label>
+    </div>
+    <details class="adv" id="rcAdv">
+      <summary>Advanced voice tuning</summary>
+      <div class="rc-grid">
+        <label>Voice likeness <span class="rc-val" id="rcStrengthVal">0.80</span>
+          <input type="range" id="rcStrength" min="0" max="1" step="0.05" value="0.8">
+          <span class="hint small">0.75–0.85 keeps words crisp; raise to 1.0 for max likeness.</span>
+        </label>
+        <label>Quality steps <span class="rc-val" id="rcStepsVal">40</span>
+          <input type="range" id="rcSteps" min="20" max="60" step="5" value="40">
+          <span class="hint small">Higher = cleaner highs, slightly slower.</span>
+        </label>
+        <label>Timbre push (CFG) <span class="rc-val" id="rcCfgVal">0.70</span>
+          <input type="range" id="rcCfg" min="0" max="1" step="0.05" value="0.7">
+        </label>
+        <label>Pitch shift <span class="rc-val" id="rcPitchShiftVal">0 st</span>
+          <input type="range" id="rcPitchShift" min="-12" max="12" step="1" value="0">
+        </label>
+      </div>
+      <label for="rcPitchMode">Pitch matching
+        <select id="rcPitchMode">
+          <option value="octave to my range">Octave to my range (keeps song key)</option>
+          <option value="keep song key">Keep original pitch untouched</option>
+          <option value="exact to my range">Exact to my range (transposes music to fit you)</option>
+        </select>
+      </label>
+    </details>
+    <p class="error" id="rcError" hidden></p>
+    <div class="progress" id="rcProgress" hidden>
+      <div class="progress-head"><strong id="rcProgLabel">Starting…</strong>
+        <span class="progress-nums"><span id="rcProgTime">0:00</span><b id="rcProgPct">0%</b></span></div>
+      <div class="bar"><i id="rcProgBar"></i></div>
+      <ol class="steps" id="rcProgSteps"></ol>
+      <p class="hint warn" id="rcProgNote" hidden></p>
+    </div>
+    <footer>
+      <button class="link" type="button" id="rcReset">Reset defaults</button>
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="rcCancel">Cancel</button>
+      <button class="btn primary" type="button" id="rcGo">Re-clone song</button>
     </footer>
   </form>
 </dialog>

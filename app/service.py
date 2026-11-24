@@ -54,16 +54,21 @@ YUE2_SAMPLE = dict(cfg_scale=-1, ode_steps=32, abc_max_tokens=4096,
                    save_artifacts=False)
 
 # Workflow values (SongVoiceSplit / SongVoiceClone / SongVoiceMix / Train).
-VOICE_CLONE = dict(my_clip_is="talking", diffusion_steps=30, cfg_rate=0.7,
+VOICE_CLONE = dict(my_clip_is="talking", diffusion_steps=40, cfg_rate=0.7,
                    pitch_mode="octave to my range", pitch_shift=0,
-                   reference_seconds=20, follow_original=True, fp16=True,
-                   keep_loaded=False, voice_strength=1.0)
+                   reference_seconds=15, follow_original=True, fp16=True,
+                   keep_loaded=False, voice_strength=0.8)
 VOICE_TRAIN_STEPS = 300
 
 
-def voice_clone_settings(voice: str) -> dict:
+def voice_clone_settings(voice: str, overrides: dict | None = None) -> dict:
     """Use the saved reference type without leaking settings between voices."""
-    return dict(VOICE_CLONE, my_clip_is=library.voice_clip_mode(voice))
+    out = dict(VOICE_CLONE, my_clip_is=library.voice_clip_mode(voice))
+    if overrides:
+        clean = library.clean_voice_settings(overrides)
+        for key in ("voice_strength", "diffusion_steps", "cfg_rate", "pitch_mode", "pitch_shift"):
+            out[key] = clean[key]
+    return out
 
 # How long a song may get decides how much VRAM YuE2 reserves up front.
 # Measured on an RTX 5080 with scripts_test/vram_probe.py (25 tokens = 1 s):
@@ -295,8 +300,9 @@ def _park_voice_models():
         from song_voice import song_voice_node as sv
     except Exception:
         return
-    for key in ("seed_vc", "hdemucs"):
-        model = sv._cache.get(key)
+    for key in ("seed_vc", "hdemucs", "roformer_vocals", "roformer_karaoke"):
+        entry = sv._cache.get(key)
+        model = entry[0] if isinstance(entry, tuple) else entry
         if model is not None:
             try:
                 model.to(torch.device("cpu"))
@@ -717,10 +723,173 @@ def _seconds(audio) -> float:
     return audio["waveform"].shape[-1] / float(audio["sample_rate"])
 
 
+def _stem_cache_dir(key: str) -> str:
+    base = os.path.join(os.path.abspath(library.CFG.get("temp_dir") or os.path.join(library.OUTPUT_DIR, os.pardir, "temp")), "stems")
+    return os.path.join(base, key)
+
+
+def _prune_stem_cache(keep: int = 8) -> None:
+    base = os.path.dirname(_stem_cache_dir("_"))
+    if not os.path.isdir(base):
+        return
+    import shutil
+    entries = sorted(
+        (os.path.join(base, name) for name in os.listdir(base) if os.path.isdir(os.path.join(base, name))),
+        key=os.path.getmtime,
+    )
+    for stale in entries[:-keep]:
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+def _write_audio_wav(audio: dict, path: str) -> None:
+    import soundfile as sf
+    wave = audio["waveform"][0].detach().float().cpu().numpy().T
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp.wav"
+    sf.write(tmp, wave, int(audio["sample_rate"]), subtype="PCM_16")
+    os.replace(tmp, path)
+
+
+def _read_stem_cache_meta(cache_dir: str) -> dict:
+    import json
+    if not cache_dir:
+        return {}
+    try:
+        with open(os.path.join(cache_dir, "meta.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_stem_cache_meta(cache_dir: str, meta: dict) -> None:
+    import json
+    os.makedirs(cache_dir, exist_ok=True)
+    tmp = os.path.join(cache_dir, "meta.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh)
+    os.replace(tmp, os.path.join(cache_dir, "meta.json"))
+
+
+def _clone_and_mix(audio: dict, voice: str, settings: dict, rep, stem_cache_key: str = ""):
+    """Separate vocals (BS-RoFormer) -> optional lead/backing split (Karaoke RoFormer)
+    -> Seed-VC clone on lead -> studio mix polish.
+
+    Fallback stems (Hybrid Demucs or skipped Karaoke) are never written to the RoFormer
+    stem cache, and any fallback is surfaced via rep.note and the returned separator info.
+    Returns (final_mix, vocals_sidecar, music_sidecar, all_vocals, semitones, sep_info).
+    """
+    from song_voice.song_voice_node import (
+        SongVoiceClone, SongVoiceLoad, SongVoiceMix, SongVoiceSplit)
+
+    keep_backing = bool(settings.get("keep_backing", True))
+    cache_dir = _stem_cache_dir(stem_cache_key) if stem_cache_key else ""
+    inst_wav = os.path.join(cache_dir, "inst.wav") if cache_dir else ""
+    voc_wav = os.path.join(cache_dir, "vocals.wav") if cache_dir else ""
+    lead_wav = os.path.join(cache_dir, "lead.wav") if cache_dir else ""
+    back_wav = os.path.join(cache_dir, "backing.wav") if cache_dir else ""
+    cache_meta = _read_stem_cache_meta(cache_dir)
+
+    splitter = SongVoiceSplit()
+    warnings: list[str] = []
+
+    if (cache_dir and cache_meta.get("separator") == "roformer"
+            and os.path.isfile(inst_wav) and os.path.isfile(voc_wav)):
+        rep.skip("split")
+        all_vocals = _read_clip(voc_wav)
+        music = _read_clip(inst_wav)
+        used_separator = "roformer"
+        try:
+            os.utime(cache_dir, None)
+        except OSError:
+            pass
+    else:
+        rep.start("split")
+        _make_room(5.0, keep="voice")
+        (all_vocals, music) = splitter.split(audio=audio, segment_seconds=10)
+        _check()
+        used_separator = getattr(splitter, "last_separator", "roformer")
+        if used_separator == "roformer":
+            if cache_dir:
+                try:
+                    _write_audio_wav(all_vocals, voc_wav)
+                    _write_audio_wav(music, inst_wav)
+                    cache_meta["separator"] = "roformer"
+                    _write_stem_cache_meta(cache_dir, cache_meta)
+                    _prune_stem_cache()
+                except OSError:
+                    pass
+        else:
+            warnings.append("BS-RoFormer was unavailable; fell back to Hybrid Demucs (see Activity log).")
+            rep.note = " ".join(warnings)
+
+    backing_vocals = None
+    used_lead = "none"
+    if keep_backing:
+        if (cache_dir and used_separator == "roformer" and cache_meta.get("lead") == "karaoke"
+                and os.path.isfile(lead_wav) and os.path.isfile(back_wav)):
+            rep.skip("lead")
+            lead_vocals = _read_clip(lead_wav)
+            backing_vocals = _read_clip(back_wav)
+            used_lead = "karaoke"
+        else:
+            rep.start("lead")
+            _make_room(5.0, keep="voice")
+            (lead_vocals, backing_vocals) = splitter.split_lead(vocals=all_vocals)
+            _check()
+            used_lead = getattr(splitter, "last_lead_separator", "karaoke" if backing_vocals is not None else "none")
+            if used_lead == "karaoke" and backing_vocals is not None:
+                if cache_dir and used_separator == "roformer":
+                    try:
+                        _write_audio_wav(lead_vocals, lead_wav)
+                        _write_audio_wav(backing_vocals, back_wav)
+                        cache_meta["lead"] = "karaoke"
+                        _write_stem_cache_meta(cache_dir, cache_meta)
+                        _prune_stem_cache()
+                    except OSError:
+                        pass
+            else:
+                warnings.append("Karaoke harmony split was unavailable; cloned the full vocal stem instead (see Activity log).")
+                rep.note = " ".join(warnings)
+    else:
+        if any(s["key"] == "lead" for s in rep.steps):
+            rep.skip("lead")
+        lead_vocals = all_vocals
+
+    rep.start("clone")
+    _make_room(6.0, keep="voice")
+    (trained,) = SongVoiceLoad().load(voice_name=voice)
+    (cloned, semitones) = SongVoiceClone().clone(
+        vocals=lead_vocals, trained_voice=trained, my_voice=None,
+        **voice_clone_settings(voice, settings))
+    _check()
+
+    rep.start("mix")
+    mixer = SongVoiceMix()
+    polish = bool(settings.get("polish", True))
+    reverb = float(settings.get("reverb", 0.18))
+    vocal_gain_db = float(settings.get("vocal_gain_db", 0.0))
+    backing_gain_db = float(settings.get("backing_gain_db", -1.5))
+    (final,) = mixer.mix(
+        vocals=cloned, instrumental=music, vocal_gain_db=vocal_gain_db,
+        instrumental_gain_db=0.0, instrumental_semitones=semitones,
+        backing_vocals=backing_vocals, backing_gain_db=backing_gain_db,
+        polish=polish, reverb_amount=reverb)
+    (vocals_sidecar,) = mixer.combine_vocals(
+        vocals=cloned, backing_vocals=backing_vocals, vocal_gain_db=vocal_gain_db,
+        backing_gain_db=backing_gain_db, polish=polish, reverb_amount=reverb,
+        backing_semitones=semitones)
+    _park_voice_models()
+    _check()
+    sep_info = {"separator": used_separator, "lead": used_lead, "warnings": warnings}
+    return final, vocals_sidecar, music, all_vocals, semitones, sep_info
+
+
 def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
               voice: str = "", title: str = "", idea: str = "", memory: str = "auto",
               model: str = "auto", singer: str = "", instrumental: bool = False,
-              score: str = "", cover: dict | None = None) -> dict:
+              score: str = "", cover: dict | None = None,
+              voice_settings: dict | None = None) -> dict:
     """Lyrics -> finished song on disk. Returns the library entry."""
     global _reporter
     import folder_paths
@@ -731,6 +900,7 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
 
     voice = "" if instrumental else (voice or "").strip()
     singer = "" if instrumental else (singer or "").strip()
+    vsettings = library.clean_voice_settings(voice_settings) if voice else None
     if instrumental:
         lyrics = ""                                     # YuE2 plays music only when the lyrics are blank
     sung_style = (library.instrumental_style(style) if instrumental
@@ -762,13 +932,16 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
     if instrumental:
         # YuE2 invents words and sings them even with blank lyrics (checked with Whisper),
         # so the vocals are taken out afterwards; the music-only track transcribes as silence.
-        plan += [("split", "Taking out the vocals", 6, 8)]
-    else:
+        plan += [("split", "Taking out the vocals", 12, 16)]
+    elif not voice:
         plan += [("align", "Timing the lyrics", 6, 8)]
     if voice:
-        plan += [("split", "Separating the vocals", 6, 8),
-                 ("clone", f"Singing it in {voice}", 60, 65),
-                 ("mix", "Mixing", 1)]
+        plan += [("split", "Separating the vocals", 12, 16)]
+        if vsettings["keep_backing"]:
+            plan += [("lead", "Isolating lead vocals from harmonies", 10, 14)]
+        plan += [("clone", f"Singing it in {voice}", 60, 65),
+                 ("mix", "Polishing & mixing", 2),
+                 ("align", "Timing the lyrics", 6, 8)]
     plan += [("save", "Saving", 2, 3)]
 
     with _run_lock:
@@ -866,15 +1039,6 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                           f"of the '{memory}' memory setting and may end abruptly", flush=True)
 
                 lrc = None
-                if not instrumental:
-                    rep.start("align")
-                    (lrc,) = SongLyricsToLRC().make_lrc(
-                        lyrics=clean_lyrics, seconds=duration, audio=audio,
-                        structure=abc_score or "", title=safe_title, artist="",
-                        language="en", offset_seconds=0.0, timing_scale=1.0,
-                        prefer_alignment=True, word_timing=True)
-                    _check()
-
                 original, final = audio, audio
                 parts = None                             # (vocals, music) when they get split apart
                 if instrumental:
@@ -884,27 +1048,21 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                     (_invented, final) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
                     _park_voice_models()
                     _check()
+                sep_info = None
+                align_audio = audio
                 if voice:
-                    from song_voice.song_voice_node import (
-                        SongVoiceClone, SongVoiceLoad, SongVoiceMix, SongVoiceSplit)
-                    rep.start("split")
-                    _make_room(6.0, keep="voice")
-                    (vocals, music) = SongVoiceSplit().split(audio=audio, segment_seconds=10)
-                    _check()
-
-                    rep.start("clone")
-                    _make_room(6.0, keep="voice")
-                    (trained,) = SongVoiceLoad().load(voice_name=voice)
-                    (cloned, _semitones) = SongVoiceClone().clone(
-                        vocals=vocals, trained_voice=trained, my_voice=None, **voice_clone_settings(voice))
-                    _check()
-
-                    parts = (cloned, music)
-                    rep.start("mix")
-                    (final,) = SongVoiceMix().mix(
-                        vocals=cloned, instrumental=music, vocal_gain_db=0,
-                        instrumental_gain_db=0, instrumental_semitones=0)
-                    _park_voice_models()
+                    final, vocals_out, music, all_vocals, _semitones, sep_info = _clone_and_mix(
+                        audio=audio, voice=voice, settings=vsettings, rep=rep)
+                    parts = (vocals_out, music)
+                    # Align WhisperX on clean isolated vocals (no guitars/drums interference)
+                    align_audio = all_vocals
+                if not instrumental:
+                    rep.start("align")
+                    (lrc,) = SongLyricsToLRC().make_lrc(
+                        lyrics=clean_lyrics, seconds=duration, audio=align_audio,
+                        structure=abc_score or "", title=safe_title, artist="",
+                        language="en", offset_seconds=0.0, timing_scale=1.0,
+                        prefer_alignment=True, word_timing=True)
                     _check()
 
                 rep.start("save")
@@ -923,7 +1081,10 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                         fh.write(abc_score.strip() + "\n")
                 library.write_meta(mp3, {
                     "title": safe_title, "idea": idea, "lyrics": lyrics, "style": style,
-                    "singer": singer, "seed": seed, "cot": cot, "voice": voice, "memory": memory, "model": model,
+                    "singer": singer, "seed": seed, "cot": cot, "voice": voice,
+                    **({"voice_settings": vsettings} if vsettings else {}),
+                    **({"separator": sep_info["separator"]} if sep_info else {}),
+                    "memory": memory, "model": model,
                     "cut_short": cut_short, "instrumental": bool(instrumental),
                     **({"cover": cover} if cover else {}),
                     "duration": round(_seconds(final), 2),
@@ -931,7 +1092,10 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                 })
                 print(f"[studio] saved {mp3} in {time.time() - started:.0f}s", flush=True)
             rep.finish()
-            return library.describe(mp3)
+            entry = library.describe(mp3)
+            if sep_info and sep_info["warnings"]:
+                entry["warnings"] = sep_info["warnings"]
+            return entry
         except Cancelled as exc:
             _release_after_cancel(exc)
             raise
@@ -1147,6 +1311,162 @@ def split_song(sid: str) -> dict:
                     os.remove(library.sidecar(mp3, ext))
                 except OSError:
                     pass
+            raise
+        except Exception as exc:
+            if _cancel.is_set():
+                _release_after_cancel(exc)
+                raise Cancelled("Cancelled") from None
+            traceback.print_exc()
+            raise
+        finally:
+            _flush()
+
+
+def _lrc_needs_order_repair(lrc_path: str, lyrics: str, duration: float = 0.0) -> bool:
+    """Detect legacy LRC files whose lyric lines were scrambled or truncated by old cover alignment."""
+    if not lyrics or not os.path.isfile(lrc_path):
+        return False
+    try:
+        from song_lrc.song_lrc_node import SongLyricsToLRC, strip_lrc_markup
+        expected = SongLyricsToLRC()._get_display_lines(lyrics)
+        if not expected:
+            return False
+        actual = []
+        last_sec = 0.0
+        fallback_byline = False
+        with open(lrc_path, encoding="utf-8") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if ln.lower().startswith("[by:") and "section-timing" in ln.lower():
+                    fallback_byline = True
+                if ln.startswith("[") and "]" in ln and not ln.startswith(("[ti:", "[ar:", "[length:", "[by:")):
+                    m = re.match(r"^\[(\d+):(\d+(?:\.\d+)?)\]", ln)
+                    if m:
+                        last_sec = max(last_sec, int(m.group(1)) * 60 + float(m.group(2)))
+                    body = strip_lrc_markup(ln)
+                    if body:
+                        actual.append(body)
+        if len(actual) == len(expected) and actual != expected:
+            return True
+        if duration > 60.0 and last_sec > 0.0 and last_sec < duration * 0.45 and (fallback_byline or len(actual) >= 10):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+# ------------------------------------------------------------------ reclone
+def reclone_song(sid: str, voice: str, voice_settings: dict | None = None) -> dict:
+    """Re-sing an existing song in a trained voice (reusing its AI take and cached stems)."""
+    global _reporter
+    import hashlib
+    import json
+    import shutil
+    import torch
+    from mp3_save import write_mp3
+
+    mp3 = library.song_path(sid)
+    song = library.describe(mp3)
+    if song["instrumental"]:
+        raise ValueError("Instrumental songs have no vocals to re-clone.")
+    voice = (voice or "").strip()
+    if not voice or voice not in [v["name"] for v in library.list_voices()]:
+        raise ValueError(f"There is no trained voice called '{voice}'.")
+    vsettings = library.clean_voice_settings(voice_settings)
+
+    plan = [("prepare", "Reading the AI take", 1),
+            ("split", "Separating vocals (BS-RoFormer)", 15, 16)]
+    if vsettings["keep_backing"]:
+        plan += [("lead", "Isolating lead vocals from harmonies", 12, 14)]
+    plan += [("clone", f"Singing it in {voice}", 60, 65),
+             ("mix", "Polishing & mixing", 2),
+             ("save", "Saving", 2, 3)]
+
+    with _run_lock:
+        _begin()
+        rep = _reporter = Reporter(plan)
+        started = time.time()
+        try:
+            with torch.inference_mode():
+                rep.start("prepare")
+                ai_mp3 = library.sidecar(mp3, ".ai.mp3")
+                if not os.path.isfile(ai_mp3):
+                    shutil.copy2(mp3, ai_mp3)       # preserve the original AI-singer mix
+                st = os.stat(ai_mp3)
+                cache_key = hashlib.sha1(
+                    f"roformer_v1|{os.path.abspath(ai_mp3)}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")
+                ).hexdigest()[:20]
+                audio = _read_clip(ai_mp3)
+                _check()
+
+                final, vocals_out, music, all_vocals, _semitones, sep_info = _clone_and_mix(
+                    audio=audio, voice=voice, settings=vsettings, rep=rep,
+                    stem_cache_key=cache_key)
+
+                # Auto-repair legacy LRC files whose lyric lines were scrambled or truncated by old cover alignment
+                lrc_path = library.sidecar(mp3, ".lrc")
+                repaired_lrc = None
+                if song.get("lyrics") and _lrc_needs_order_repair(lrc_path, song["lyrics"], _seconds(all_vocals)):
+                    try:
+                        from song_lrc.song_lrc_node import SongLyricsClean, SongLyricsToLRC
+                        (clean_lrc_lyrics, _t) = SongLyricsClean().clean(library.strip_multipliers(song["lyrics"]))
+                        abc_path = library.sidecar(mp3, ".abc")
+                        abc_text = ""
+                        if os.path.isfile(abc_path):
+                            with open(abc_path, encoding="utf-8") as fh:
+                                abc_text = fh.read()
+                        (repaired_lrc,) = SongLyricsToLRC().make_lrc(
+                            lyrics=clean_lrc_lyrics, seconds=_seconds(all_vocals), audio=all_vocals,
+                            structure=abc_text, title=song["title"], artist="",
+                            language="en", offset_seconds=0.0, timing_scale=1.0,
+                            prefer_alignment=True, word_timing=True)
+                    except Exception as exc:
+                        print(f"[studio] skipped LRC repair: {exc}", flush=True)
+
+                rep.start("save")
+                # Write via temp files so a failure never leaves a half-written song
+                tmp_main = mp3 + ".reclone.tmp.mp3"
+                tmp_voc = library.sidecar(mp3, ".vocals.mp3") + ".reclone.tmp.mp3"
+                tmp_inst = library.sidecar(mp3, ".instrumental.mp3") + ".reclone.tmp.mp3"
+                try:
+                    write_mp3(final, tmp_main)
+                    write_mp3(vocals_out, tmp_voc)
+                    write_mp3(music, tmp_inst)
+                    os.replace(tmp_main, mp3)
+                    os.replace(tmp_voc, library.sidecar(mp3, ".vocals.mp3"))
+                    os.replace(tmp_inst, library.sidecar(mp3, ".instrumental.mp3"))
+                    if repaired_lrc:
+                        with open(lrc_path, "w", encoding="utf-8", newline="\n") as fh:
+                            fh.write(str(repaired_lrc))
+                        print(f"[studio] repaired scrambled LRC for {os.path.basename(mp3)}", flush=True)
+                finally:
+                    for p in (tmp_main, tmp_voc, tmp_inst):
+                        if os.path.isfile(p):
+                            try:
+                                os.remove(p)
+                            except OSError:
+                                pass
+
+                meta_path = library.sidecar(mp3, ".json")
+                try:
+                    with open(meta_path, encoding="utf-8") as fh:
+                        meta = json.load(fh)
+                except (OSError, ValueError):
+                    meta = {"title": song["title"]}
+                meta["voice"] = voice
+                meta["voice_settings"] = vsettings
+                meta["separator"] = sep_info["separator"]
+                meta["updated"] = time.time()
+                meta["duration"] = round(_seconds(final), 2)
+                library.write_meta(mp3, meta)
+                print(f"[studio] re-cloned {os.path.basename(mp3)} in '{voice}' via {sep_info['separator']} ({time.time() - started:.0f}s)", flush=True)
+            rep.finish()
+            entry = library.describe(mp3)
+            if sep_info["warnings"]:
+                entry["warnings"] = sep_info["warnings"]
+            return entry
+        except Cancelled as exc:
+            _release_after_cancel(exc)
             raise
         except Exception as exc:
             if _cancel.is_set():

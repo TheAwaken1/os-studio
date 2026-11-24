@@ -14,7 +14,7 @@ node graph.
 | Lyrics writer | Qwen3-VL-4B-Instruct (or its 4-bit / 8-bit forms, or Qwen3-VL-2B — pick in step 1) |
 | Song | YuE2-3B — the full model, or the small INT8 single file (pick in step 3; Auto chooses by graphics card) |
 | Lyric timing | SongLRC + WhisperX word alignment |
-| Voice clone | Seed-VC + Hybrid Demucs (train once from a talking clip) |
+| Voice clone | Seed-VC + BS-RoFormer & Mel-Band RoFormer Karaoke (Demucs fallback; train once from a talking or singing clip) |
 | Covers | SheetSage2 (song → melody/chord score) + Whisper large-v3 turbo (writing lyrics down) |
 
 ## Requirements
@@ -83,6 +83,12 @@ are non-commercial (CC BY-NC 4.0); cover other people's songs for personal use o
 
 **Music & vocals** in the player splits any song into *Music only* and *Vocals
 only* versions (a few seconds); voice-cloned songs get them automatically.
+
+**Re-clone voice** in the player lets you switch voices or fine-tune vocal mix
+controls (lead/backing vocal separation, voice strength, diffusion steps, pitch
+range, studio EQ/compression, stereo reverb, and vocal/backing gain) on any
+existing song without regenerating the music. Separated stems are cached so
+subsequent tweaks finish in seconds.
 
 *More options* holds the song title, the seed, and melody planning.
 *Remix* on any song loads its lyrics and settings back into the composer.

@@ -142,6 +142,9 @@ def describe(mp3_path: str) -> dict:
         "has_score": os.path.isfile(sidecar(mp3_path, ".abc")),
         "instrumental": bool(meta.get("instrumental")),
         "voice": meta.get("voice") or "",
+        "voice_settings": meta.get("voice_settings") if isinstance(meta.get("voice_settings"), dict) else None,
+        "separator": meta.get("separator") or "",
+        "updated": meta.get("updated") or st.st_mtime,
         "style": meta.get("style") or "",
         "singer": meta.get("singer") or "",
         "seed": meta.get("seed"),
@@ -580,6 +583,57 @@ def safe_voice_name(name: str) -> str:
 
 
 VOICE_RECORDING_TYPES = ("talking", "singing", "rapping")
+VOICE_PITCH_MODES = ("keep song key", "octave to my range", "exact to my range")
+VOICE_SETTINGS_DEFAULTS = {
+    "keep_backing": True,
+    "backing_gain_db": -1.5,
+    "voice_strength": 0.8,
+    "diffusion_steps": 40,
+    "cfg_rate": 0.7,
+    "pitch_mode": "octave to my range",
+    "pitch_shift": 0,
+    "vocal_gain_db": 0.0,
+    "reverb": 0.18,
+    "polish": True,
+}
+
+
+def clean_voice_settings(raw: dict | None) -> dict:
+    """Validate and normalize voice clone + mix tuning options, filling defaults."""
+    out = dict(VOICE_SETTINGS_DEFAULTS)
+    if not raw:
+        return out
+    if not isinstance(raw, dict):
+        raise ValueError("Voice settings must be an object.")
+    if "keep_backing" in raw:
+        out["keep_backing"] = bool(raw["keep_backing"])
+    if "polish" in raw:
+        out["polish"] = bool(raw["polish"])
+    if "pitch_mode" in raw and raw["pitch_mode"] is not None:
+        pm = str(raw["pitch_mode"])
+        if pm not in VOICE_PITCH_MODES:
+            raise ValueError("Unknown pitch mode.")
+        out["pitch_mode"] = pm
+
+    def _num(key, lo, hi, as_int=False):
+        if key not in raw or raw[key] is None:
+            return
+        try:
+            val = float(raw[key])
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid value for {key}.") from None
+        if val < lo or val > hi:
+            raise ValueError(f"{key} must be between {lo} and {hi}.")
+        out[key] = int(round(val)) if as_int else round(val, 3)
+
+    _num("backing_gain_db", -24.0, 6.0)
+    _num("voice_strength", 0.0, 1.0)
+    _num("diffusion_steps", 10, 80, as_int=True)
+    _num("cfg_rate", 0.0, 1.0)
+    _num("pitch_shift", -12, 12, as_int=True)
+    _num("vocal_gain_db", -12.0, 12.0)
+    _num("reverb", 0.0, 0.7)
+    return out
 
 
 def clean_voice_recording_type(recording_type: str) -> str:

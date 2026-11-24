@@ -585,6 +585,7 @@
       : "Write or paste your own lyrics here, or use Write lyrics below to start a draft.";
     renderWriteButtons();
     renderLengthSummary();
+    if (state.cover) renderCover();
     renderGuide();
   }
 
@@ -668,6 +669,10 @@
     $("voiceProgress").hidden = kind !== "voice";
     $("voiceTrain").disabled = running;
     $("btnSplit").disabled = running;
+    $("btnReclone").disabled = running;
+    $("rcGo").disabled = running;
+    $("rcProgress").hidden = kind !== "reclone";
+    if (kind !== "reclone") state.rcStepSignature = null;
     $("coverGo").disabled = running;
     $("coverProgress").hidden = kind !== "cover";
     $("btnSplit").classList.toggle("busy", kind === "split");
@@ -677,7 +682,7 @@
       pill.dataset.state = "error"; pill.lastElementChild.textContent = "Engine failed to start";
     } else if (running) {
       pill.dataset.state = "busy";
-      pill.lastElementChild.textContent = { song: "Making a song", lyrics: "Writing lyrics", voice: "Learning a voice", style: "Making a style", split: "Splitting a song", cover: "Listening to a song" }[kind];
+      pill.lastElementChild.textContent = { song: "Making a song", lyrics: "Writing lyrics", voice: "Learning a voice", style: "Making a style", split: "Splitting a song", cover: "Listening to a song", reclone: "Re-cloning voice" }[kind];
     } else if (state.engine === "ready") {
       pill.dataset.state = "ready"; pill.lastElementChild.textContent = "Ready";
     } else {
@@ -714,6 +719,18 @@
       $("cpPct").textContent = pct;
       $("cpTime").textContent = clock(job.elapsed);
       $("cpBar").style.width = pct;
+    } else if (job.kind === "reclone") {
+      $("rcProgLabel").textContent = prog.label || "Working…";
+      $("rcProgPct").textContent = pct;
+      $("rcProgTime").textContent = clock(job.elapsed);
+      $("rcProgBar").style.width = pct;
+      $("rcProgNote").textContent = prog.note || "";
+      $("rcProgNote").hidden = !prog.note;
+      const sig = prog.steps.map((s) => s.key + ":" + s.state).join("|");
+      if (sig !== state.rcStepSignature) {
+        state.rcStepSignature = sig;
+        $("rcProgSteps").replaceChildren(...prog.steps.map((s) => el("li", s.state, s.label)));
+      }
     } else if (job.kind === "style") {
       $("styleAIHint").textContent = `${prog.label || "Starting"}… ${clock(job.elapsed)}`;
     } else if (job.kind === "lyrics") {
@@ -735,6 +752,7 @@
       toast(job.error || "That didn't work.", "error", { label: "Details", run: () => openDrawer(true) });
       if (job.kind === "voice") { $("voiceError").textContent = job.error; $("voiceError").hidden = false; }
       if (job.kind === "cover") { $("coverError").textContent = job.error; $("coverError").hidden = false; }
+      if (job.kind === "reclone") { $("rcError").textContent = job.error; $("rcError").hidden = false; }
       if (job.kind === "lyrics" && state.lyricsBefore != null) setLyrics(state.lyricsBefore, false);
       return;
     }
@@ -772,8 +790,11 @@
       const run = mine ? state.takeRun : null;
       if (run) run.done += 1;
       const label = run && run.total > 1 ? `Take ${run.done} of ${run.total}, "${song.title}",` : `"${song.title}"`;
+      const warnings = (job.result.song && job.result.song.warnings) || [];
       if (song.cut_short) {
         toast(`${label} is ready, but it ran into the length limit and may end abruptly. Shorten the lyrics, or raise Graphics memory in More options.`, "error");
+      } else if (warnings.length) {
+        toast(`${label} is ready, with a fallback: ${warnings.join(" ")}`, "error", { label: "Details", run: () => openDrawer(true) });
       } else toast(`${label} is ready.`, "ok", { label: "Listen", run: () => listenTo(song) });
       if (run && run.done < run.total) {
         if (!await startTake()) { state.takeRun = null; renderTakes(); }
@@ -796,6 +817,22 @@
       }
       toast(`"${job.result.song.title}" now has Music only and Vocals only versions. Switch at the top of the player.`, "ok",
             song ? { label: "Play music only", run: () => { if (!state.current || state.current.id !== song.id) loadSong(song, true, { version: "inst" }); else { switchVersion("inst"); requestPlay(); } } } : undefined);
+    } else if (job.kind === "reclone") {
+      await refreshSongs();
+      const song = state.songs.find((s) => s.id === job.result.song.id) || job.result.song;
+      const warnings = (job.result.song && job.result.song.warnings) || [];
+      const mine = state.startedJobs.has(job.id);
+      if (mine && $("recloneDlg").open) $("recloneDlg").close();
+      if (song && (!state.current || state.current.id === song.id)) {
+        loadSong(song, mine, { version: "" });
+      }
+      if (warnings.length) {
+        toast(`Re-cloned "${song.title}" in "${song.voice}", with a fallback: ${warnings.join(" ")}`, "error",
+              { label: "Details", run: () => openDrawer(true) });
+      } else {
+        toast(`Re-cloned "${song.title}" in "${song.voice}". Switch between your voice and AI singer at the top of the player.`, "ok",
+              song ? { label: "Listen", run: () => listenTo(song) } : undefined);
+      }
     } else if (job.kind === "voice") {
       const fresh = await api("/api/voices");
       state.voices = fresh.voices;
@@ -1070,7 +1107,16 @@
     $("composer").dataset.cover = String(Boolean(c));
     if (!c) return;
     const bits = [c.key, c.bpm ? `${c.bpm} BPM` : "", c.sections && c.sections.length ? `${c.sections.length} sections` : ""].filter(Boolean);
-    $("coverText").textContent = `Cover of “${c.name}”${bits.length ? " · " + bits.join(" · ") : ""}. The melody follows the original; the sound and singer are yours.`;
+    let msg = `Cover of “${c.name}”${bits.length ? " · " + bits.join(" · ") : ""}. The melody follows the original; the sound and singer are yours.`;
+    const coverSung = (c.sections || []).filter((s) => s.sung).length;
+    if (coverSung > 0) {
+      const blocks = ($("lyrics").value || "").split(/^\s*(?:\d+x\s*)?\[[^\]]+\]\s*$/m)
+        .filter((part) => part.split("\n").some((l) => l.trim()));
+      if (blocks.length > coverSung) {
+        msg += ` Note: your lyrics have ${blocks.length} sung sections, but this cover's melody has ${coverSung} — extra sections at the end may drift.`;
+      }
+    }
+    $("coverText").textContent = msg;
     document.querySelectorAll("#coverFollow [data-follow]").forEach((b) => {
       const on = b.dataset.follow === (c.follow || "melody");
       b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on));
@@ -1602,6 +1648,7 @@
     const params = new URLSearchParams();
     if (version) params.set("v", version);
     if (download) params.set("dl", "1");
+    else if (song && song.updated) params.set("t", String(Math.round(song.updated)));
     const q = params.toString();
     return "/media/" + song.id + (q ? "?" + q : "");
   }
@@ -1620,6 +1667,7 @@
     $("npSub").textContent = bits.join(" · ");
     renderVersions(song);
     $("btnSplit").hidden = song.instrumental || (song.has_inst && song.has_vocals);
+    $("btnReclone").hidden = Boolean(song.instrumental);
     $("dlMp3").href = mediaUrl(song, state.version, true);
     $("dlLrc").href = "/api/songs/" + song.id + "/lrc?dl=1";
     $("dlLrc").hidden = !song.has_lrc;
@@ -1637,7 +1685,8 @@
     if (autoplay) requestPlay();
     if (song.has_lrc) {
       try {
-        const resp = await fetch("/api/songs/" + song.id + "/lrc");
+        const lrcUrl = "/api/songs/" + song.id + "/lrc" + (song.updated ? "?t=" + Math.round(song.updated) : "");
+        const resp = await fetch(lrcUrl);
         const text = resp.ok ? await resp.text() : null;
         if (loadId !== state.songLoadId) return;
         if (text != null) state.lrc = labelSections(parseLrc(text), song.lyrics);
@@ -1694,11 +1743,16 @@
   const wave = { dirty: true, mark: -1 };
 
   async function loadViz(song, version) {
-    const key = song.id + "|" + version;
+    const stamp = song && song.updated ? Math.round(song.updated) : 0;
+    const key = song.id + "|" + version + "|" + stamp;
     viz.key = key; viz.data = null; wave.dirty = true;
     drawViz();
     try {
-      const resp = await fetch("/api/songs/" + song.id + "/viz" + (version ? "?v=" + version : ""));
+      const params = new URLSearchParams();
+      if (version) params.set("v", version);
+      if (stamp) params.set("t", String(stamp));
+      const q = params.toString();
+      const resp = await fetch("/api/songs/" + song.id + "/viz" + (q ? "?" + q : ""));
       if (!resp.ok) return;
       const data = await resp.json();
       if (viz.key !== key) return;                          // another song was picked meanwhile
@@ -2268,6 +2322,98 @@
     }
   }
 
+  /* ------------------------------------------------------------ re-clone dialog */
+  const RC_DEFAULTS = {
+    keep_backing: true, backing_gain_db: -1.5, voice_strength: 0.8,
+    diffusion_steps: 40, cfg_rate: 0.7, pitch_mode: "octave to my range",
+    pitch_shift: 0, vocal_gain_db: 0.0, reverb: 0.18, polish: true,
+  };
+
+  function updateRecloneReadouts() {
+    const num = (id) => Number($(id).value);
+    const fmtDb = (v) => (v > 0 ? "+" : "") + v.toFixed(1) + " dB";
+    const fmtPct = (v) => Math.round(v * 100) + "%";
+    const fmtSt = (v) => (v > 0 ? "+" : "") + v + " st";
+    $("rcVocalGainVal").textContent = fmtDb(num("rcVocalGain"));
+    $("rcReverbVal").textContent = fmtPct(num("rcReverb"));
+    $("rcBackingGainVal").textContent = fmtDb(num("rcBackingGain"));
+    $("rcStrengthVal").textContent = num("rcStrength").toFixed(2);
+    $("rcStepsVal").textContent = String(Math.round(num("rcSteps")));
+    $("rcCfgVal").textContent = num("rcCfg").toFixed(2);
+    $("rcPitchShiftVal").textContent = fmtSt(Math.round(num("rcPitchShift")));
+    const backingOn = $("rcKeepBacking").checked;
+    $("rcBackingWrap").classList.toggle("disabled", !backingOn);
+    $("rcBackingGain").disabled = !backingOn;
+    [
+      ["rcVocalGain", -6, 6], ["rcReverb", 0, 0.6], ["rcBackingGain", -12, 3],
+      ["rcStrength", 0, 1], ["rcSteps", 20, 60], ["rcCfg", 0, 1], ["rcPitchShift", -12, 12],
+    ].forEach(([id, lo, hi]) => {
+      $(id).style.setProperty("--p", ((num(id) - lo) / (hi - lo) * 100) + "%");
+    });
+  }
+
+  function fillRecloneSettings(src) {
+    const s = { ...RC_DEFAULTS, ...(state.voiceDefaults || {}), ...(src || {}) };
+    $("rcKeepBacking").checked = Boolean(s.keep_backing);
+    $("rcPolish").checked = Boolean(s.polish);
+    $("rcVocalGain").value = String(s.vocal_gain_db);
+    $("rcReverb").value = String(s.reverb);
+    $("rcBackingGain").value = String(s.backing_gain_db);
+    $("rcStrength").value = String(s.voice_strength);
+    $("rcSteps").value = String(s.diffusion_steps);
+    $("rcCfg").value = String(s.cfg_rate);
+    $("rcPitchMode").value = s.pitch_mode || "octave to my range";
+    $("rcPitchShift").value = String(s.pitch_shift || 0);
+    updateRecloneReadouts();
+  }
+
+  function openRecloneDialog() {
+    const song = state.current;
+    if (!song || song.instrumental) return;
+    if (!state.voices.length) {
+      toast("Train a voice in Step 4 first, then you can re-clone any song.", "error");
+      return;
+    }
+    state.recloneSongId = song.id;
+    $("rcError").hidden = true;
+    $("rcHint").textContent = `Re-sing “${song.title}” from its AI take with BS-RoFormer vocal separation and studio mix polish. The AI version is always kept.`;
+    const pick = $("rcVoice");
+    pick.replaceChildren();
+    state.voices.forEach((v) => {
+      const opt = el("option", null, `${v.name} (${v.recording_type || "talking"})`);
+      opt.value = v.name;
+      pick.append(opt);
+    });
+    if (song.voice && state.voices.some((v) => v.name === song.voice)) pick.value = song.voice;
+    fillRecloneSettings(song.voice_settings);
+    $("recloneDlg").showModal();
+  }
+
+  async function startReclone() {
+    const sid = state.recloneSongId || (state.current && state.current.id);
+    const voice = $("rcVoice").value;
+    const showErr = (msg) => { $("rcError").textContent = msg; $("rcError").hidden = false; };
+    $("rcError").hidden = true;
+    if (!sid) return showErr("Pick a song first.");
+    if (!voice) return showErr("Pick a trained voice first.");
+    if (busy()) return showErr("Wait for the current job to finish first.");
+    const voice_settings = {
+      keep_backing: $("rcKeepBacking").checked,
+      polish: $("rcPolish").checked,
+      vocal_gain_db: Number($("rcVocalGain").value),
+      reverb: Number($("rcReverb").value),
+      backing_gain_db: Number($("rcBackingGain").value),
+      voice_strength: Number($("rcStrength").value),
+      diffusion_steps: Number($("rcSteps").value),
+      cfg_rate: Number($("rcCfg").value),
+      pitch_mode: $("rcPitchMode").value,
+      pitch_shift: Number($("rcPitchShift").value),
+    };
+    if (await startJob(`/api/songs/${sid}/reclone`, { body: { voice, voice_settings } }, "reclone")) {
+      $("rcProgress").hidden = false;
+    }
+  }
+
   /* ------------------------------------------------------------ log drawer */
   function appendLog(lines) {
     if (!lines || !lines.length) return;
@@ -2389,6 +2535,17 @@
       if (await startJob(`/api/songs/${song.id}/split`, { body: {} }, "split"))
         toast("Separating the music and the vocals. This takes about a minute the first time, then seconds.");
     };
+    $("btnReclone").onclick = openRecloneDialog;
+    $("rcGo").onclick = startReclone;
+    $("rcReset").onclick = () => fillRecloneSettings(null);
+    $("rcCancel").onclick = () => {
+      if (busy() && state.job.kind === "reclone") api("/api/cancel", { method: "POST" }).catch(() => {});
+      $("recloneDlg").close();
+    };
+    ["rcVocalGain", "rcReverb", "rcBackingGain", "rcStrength", "rcSteps", "rcCfg", "rcPitchShift", "rcKeepBacking"].forEach((id) => {
+      $(id).addEventListener("input", updateRecloneReadouts);
+      $(id).addEventListener("change", updateRecloneReadouts);
+    });
     renderVocals();
     try { state.takes = Math.min(4, Math.max(1, Number(localStorage.getItem("yss.takes")) || 1)); } catch (_) { /* default 1 */ }
     renderTakes();
@@ -2502,6 +2659,7 @@
       state.styleEngine = "yue2";
       setStyleSets(data.engine_styles);
       state.voices = data.voices;
+      state.voiceDefaults = data.voice_defaults || null;
       state.singers = data.singers || [];
       if (!state.singerOwn && state.singer && !state.singers.some((p) => p.id === state.singer)) state.singer = "";
       state.writers = data.writers || [];

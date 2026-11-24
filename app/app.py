@@ -85,7 +85,10 @@ class LogBook:
     def __init__(self, path: str, keep: int = 600):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path) and os.path.getsize(path) > 2_000_000:
-            os.replace(path, path + ".old")
+            try:
+                os.replace(path, path + ".old")
+            except OSError:
+                pass
         self._file = open(path, "a", encoding="utf-8", errors="replace")
         self._lines = collections.deque(maxlen=keep)
         self._seq = 0
@@ -277,6 +280,12 @@ class SongBody(BaseModel):
     instrumental: bool = False      # no vocals: lyrics are ignored
     cover_id: str = ""              # follow the melody of an analysed song (POST /api/covers)
     cover_follow: str = "melody"    # "melody" or "full" (melody + chords)
+    voice_settings: dict | None = None
+
+
+class RecloneBody(BaseModel):
+    voice: str
+    voice_settings: dict | None = None
 
 
 def _gpu():
@@ -348,6 +357,7 @@ def state():
         "engine_styles": styles,
         "singers": library.SINGER_PRESETS,
         "voices": library.list_voices(),
+        "voice_defaults": library.VOICE_SETTINGS_DEFAULTS,
         "writers": library.lyrics_writers(),
         "default_writer": _default_writer(),
         "song_models": library.song_models(),
@@ -540,12 +550,19 @@ def api_song(body: SongBody):
         score = plan["full_abc"] if body.cover_follow == "full" else plan["melody_abc"]
         cover = {"id": plan["id"], "name": plan["name"], "follow": body.cover_follow}
 
+    vsettings = None
+    if body.voice_settings is not None:
+        try:
+            vsettings = library.clean_voice_settings(body.voice_settings)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
     def run(service, job):
         return {"song": service.make_song(
             lyrics=body.lyrics, style=body.style.strip(), seed=body.seed, cot=body.cot,
             voice=body.voice, title=body.title, idea=body.idea, memory=body.memory,
             model=body.model, singer=body.singer, instrumental=body.instrumental,
-            score=score, cover=cover)}
+            score=score, cover=cover, voice_settings=vsettings)}
 
     return _start("song", run)
 
@@ -626,6 +643,29 @@ def api_split_song(sid: str):
         return {"song": service.split_song(sid)}
 
     return _start("split", run)
+
+
+@app.post("/api/songs/{sid}/reclone")
+def api_reclone_song(sid: str, body: RecloneBody):
+    """Re-sing an existing song in a trained voice with tunable clone & mix settings (a GPU job)."""
+    try:
+        song = library.describe(library.song_path(sid))
+    except FileNotFoundError:
+        raise HTTPException(404, "That song is no longer on disk.") from None
+    if song["instrumental"]:
+        raise HTTPException(400, "Instrumental songs have no vocals to re-clone.")
+    voice = (body.voice or "").strip()
+    if not voice or voice not in [v["name"] for v in library.list_voices()]:
+        raise HTTPException(400, "Pick a trained voice first.")
+    try:
+        vsettings = library.clean_voice_settings(body.voice_settings)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    def run(service, job):
+        return {"song": service.reclone_song(sid, voice=voice, voice_settings=vsettings)}
+
+    return _start("reclone", run)
 
 
 @app.post("/api/cancel")

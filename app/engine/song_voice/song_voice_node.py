@@ -2,7 +2,7 @@
 
 Three nodes, meant to sit right after any song generator (YuE2, ACE-Step, ...):
 
-    Split Vocals   song -> vocals + instrumental   (Hybrid Demucs, built into torchaudio)
+    Split Vocals   song -> vocals + instrumental   (BS-RoFormer, with Hybrid Demucs fallback)
     Voice Clone    vocals + a clip of you -> vocals in your voice   (Seed-VC singing model)
     Remix          your vocals + instrumental -> finished song
 
@@ -104,24 +104,191 @@ def _envelope_db(mono, sr, frame_ms=10):
     return F.interpolate(env[None, None], size=mono.numel(), mode="linear", align_corners=False)[0, 0]
 
 
-def _follow_original(converted, original, sr, range_db=40.0):
-    """Shape converted vocals by the original stem: same loudness, silent where the song has no singing.
+def _follow_original(converted, original, sr, range_db=44.0):
+    """Shape converted vocals by the original stem: matched phrasing dynamics, silent where the song has no singing.
 
     Seed-VC renders at your clip's level and can hum faintly over the stem's
-    silent gaps (intros, solos). Both are fixed from the original envelope.
+    silent gaps (intros, solos). Using a smooth section-level loudness follower
+    keeps quiet verses intimate and lets choruses lift naturally.
     """
     env = _envelope_db(original, sr)
-    active = env > env.max() - range_db
+    # Use 99th-percentile level (subsampled for torch.quantile size safety) so a single transient
+    # spike never pushes quiet verses below the gate floor.
+    stride = max(1, env.numel() // 100_000)
+    peak_db = torch.quantile(env[::stride], 0.99).item()
+    floor = peak_db - range_db
+    active = env > floor
     if active.sum() < sr // 10:
         return converted
-    gain = original[active].pow(2).mean().sqrt() / (converted[active].pow(2).mean().sqrt() + 1e-9)
-    # Soft gate: open over 12 dB above the floor, smoothed ~30 ms so syllable edges are kept.
-    floor = env.max() - range_db
+    global_gain = original[active].pow(2).mean().sqrt() / (converted[active].pow(2).mean().sqrt() + 1e-9)
+
+    # Smooth phrasing-level (~1.2 s) loudness follower so verses & choruses keep original dynamics.
+    hop = max(1, int(sr * 0.02))
+    pad = (-original.numel()) % hop
+    orig_rms = F.pad(original, (0, pad)).view(-1, hop).pow(2).mean(1).sqrt()
+    conv_rms = F.pad(converted, (0, pad)).view(-1, hop).pow(2).mean(1).sqrt()
+    win = max(3, int(1.2 / 0.02)) | 1
+    orig_sm = F.avg_pool1d(orig_rms[None, None], win, stride=1, padding=win // 2)[0, 0]
+    conv_sm = F.avg_pool1d(conv_rms[None, None], win, stride=1, padding=win // 2)[0, 0]
+    local_gain = (orig_sm + 1e-5) / (conv_sm + 1e-5)
+    local_gain = local_gain.clamp(global_gain * 0.45, global_gain * 2.2)
+    # Blend 65% local dynamics + 35% global level for natural, pump-free phrasing.
+    blended = 0.65 * local_gain + 0.35 * global_gain
+    gain_curve = F.interpolate(blended[None, None], size=converted.numel(), mode="linear", align_corners=False)[0, 0]
+
+    # Soft gate: open over 12 dB above the floor, smoothed ~35 ms so syllable edges are kept.
     gate = ((env - floor) / 12.0).clamp(0.0, 1.0)
-    k = max(1, int(sr * 0.03)) | 1
+    k = max(1, int(sr * 0.035)) | 1
     gate = F.max_pool1d(gate[None, None], k, stride=1, padding=k // 2)[0, 0]
     gate = F.avg_pool1d(gate[None, None], k, stride=1, padding=k // 2)[0, 0][:converted.numel()]
-    return converted * gain * gate
+    return converted * gain_curve * gate
+
+
+_REVERB_IR_CACHE = {}
+
+
+def _biquad_peaking(freq, sr, gain_db, q=1.0):
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * math.pi * freq / sr
+    alpha = math.sin(w0) / (2.0 * q)
+    c = math.cos(w0)
+    b0 = 1.0 + alpha * A
+    b1 = -2.0 * c
+    b2 = 1.0 - alpha * A
+    a0 = 1.0 + alpha / A
+    a1 = -2.0 * c
+    a2 = 1.0 - alpha / A
+    return np.array([[b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]], dtype=np.float64)
+
+
+def _biquad_high_shelf(freq, sr, gain_db, slope=0.75):
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * math.pi * freq / sr
+    c = math.cos(w0)
+    s = math.sin(w0)
+    alpha = s / 2.0 * math.sqrt((A + 1.0 / A) * (1.0 / slope - 1.0) + 2.0)
+    sq = 2.0 * math.sqrt(A) * alpha
+    b0 = A * ((A + 1.0) + (A - 1.0) * c + sq)
+    b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * c)
+    b2 = A * ((A + 1.0) + (A - 1.0) * c - sq)
+    a0 = (A + 1.0) - (A - 1.0) * c + sq
+    a1 = 2.0 * ((A - 1.0) - (A + 1.0) * c)
+    a2 = (A + 1.0) - (A - 1.0) * c - sq
+    return np.array([[b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]], dtype=np.float64)
+
+
+def _stereo_vocal_ir(sr, decay_s=0.85, predelay_ms=22.0):
+    """Synthesize a clean, damped stereo plate/room impulse response for vocals."""
+    key = (int(sr), round(decay_s, 3), round(predelay_ms, 1))
+    cached = _REVERB_IR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from scipy import signal
+    length = max(256, int(sr * (decay_s + predelay_ms / 1000.0 + 0.1)))
+    rng = np.random.default_rng(20260417)
+    ir = np.zeros((2, length), dtype=np.float32)
+
+    # Decorrelated stereo early reflections (20-58 ms) for subtle width
+    early = [
+        (0.022, 0.32, 0.16), (0.029, 0.14, 0.28),
+        (0.037, 0.22, 0.11), (0.046, 0.10, 0.20),
+        (0.055, 0.14, 0.13),
+    ]
+    for sec, gl, gr in early:
+        idx = int(sec * sr)
+        if idx < length:
+            ir[0, idx] += gl
+            ir[1, idx] += gr
+
+    # Smooth exponentially damped diffuse stereo tail starting after pre-delay
+    pre = int(sr * predelay_ms / 1000.0)
+    tail_len = max(1, length - pre)
+    t = np.arange(tail_len, dtype=np.float32) / float(sr)
+    # RT60 ~ decay_s -> amplitude decays by 60 dB (-6.91 in ln) over decay_s
+    env = np.exp(-6.91 * t / max(0.15, decay_s))
+    # Smooth 20 ms fade-in so tail blooms gently behind the dry vocal
+    attack = min(tail_len, max(1, int(sr * 0.02)))
+    env[:attack] *= np.linspace(0.0, 1.0, attack, dtype=np.float32)
+    noise = rng.standard_normal((2, tail_len)).astype(np.float32) * env[None, :]
+    ir[:, pre:] += noise * 0.22
+
+    # Band-limit reverb (260 Hz - 5.5 kHz) so bass never muddies and sibilants never hiss
+    lo = min(0.45, 260.0 / (0.5 * sr))
+    hi = min(0.95, 5500.0 / (0.5 * sr))
+    if hi > lo > 0.001:
+        sos = signal.butter(2, [lo, hi], btype="bandpass", output="sos")
+        ir = signal.sosfilt(sos, ir, axis=-1).astype(np.float32)
+
+    # Normalize total IR energy so reverb_amount is predictable (0.18 = subtle studio glue)
+    energy = float(np.sqrt(np.mean(np.sum(ir ** 2, axis=-1)))) + 1e-8
+    ir = ir / energy
+    _REVERB_IR_CACHE[key] = ir
+    return ir
+
+
+def _polish_vocals(voc_stereo, sr, reverb_amount=0.18, eq_and_comp=True):
+    """Studio vocal chain so dry mono Seed-VC vocals sit naturally inside a stereo mix:
+    optional 85 Hz high-pass -> subtle clarity EQ -> gentle 2.5:1 compression -> optional stereo plate reverb.
+    """
+    from scipy import signal
+    x = voc_stereo.detach().float().cpu().numpy()
+    if x.shape[-1] < 64 or float(np.max(np.abs(x))) < 1e-6:
+        return voc_stereo
+
+    if eq_and_comp:
+        nyq = 0.5 * sr
+        # 1. High-pass at 85 Hz (zero-phase) to clean sub-bass rumble / plosives
+        if 85.0 < nyq * 0.8:
+            sos_hp = signal.butter(2, 85.0 / nyq, btype="highpass", output="sos")
+            x = signal.sosfiltfilt(sos_hp, x, axis=-1)
+
+        # 2. Gentle clarity EQ: slight low-mid cleanup (-1.2 dB @ 280 Hz) + air/presence (+1.8 dB @ 4.5 kHz)
+        if 4500.0 < nyq * 0.85:
+            sos_eq = np.vstack([
+                _biquad_peaking(280.0, sr, -1.2, q=1.0),
+                _biquad_high_shelf(4500.0, sr, 1.8, slope=0.75),
+            ])
+            x = signal.sosfilt(sos_eq, x, axis=-1)
+
+        # 3. Gentle soft-knee vocal compressor (2.5:1 above -18 dB RMS, matched active RMS makeup)
+        mono = x.mean(axis=0)
+        frame = max(1, int(sr * 0.01))
+        pad = (-mono.size) % frame
+        rms = np.sqrt(np.mean(np.pad(mono, (0, pad)).reshape(-1, frame) ** 2, axis=1) + 1e-10)
+        db = 20.0 * np.log10(rms + 1e-9)
+        # Smooth envelope (~20 ms attack, ~140 ms release)
+        sm = np.empty_like(db)
+        sm[0] = db[0]
+        a_att = math.exp(-0.01 / 0.020)
+        a_rel = math.exp(-0.01 / 0.140)
+        for i in range(1, db.size):
+            coeff = a_att if db[i] > sm[i - 1] else a_rel
+            sm[i] = coeff * sm[i - 1] + (1.0 - coeff) * db[i]
+        thresh, ratio = -18.0, 2.5
+        over = np.maximum(0.0, sm - thresh)
+        gain_db = -over * (1.0 - 1.0 / ratio)
+        gain_lin = 10.0 ** (gain_db / 20.0)
+        gain_full = np.interp(np.arange(mono.size), np.arange(gain_lin.size) * frame, gain_lin).astype(np.float32)
+        comp = (x * gain_full[None, :]).astype(np.float32)
+        # Preserve pre-compression active RMS so vocal level stays true to _follow_original
+        active = db > (np.percentile(db, 95) - 30.0)
+        if active.any():
+            active_full = np.repeat(active, frame)[:mono.size]
+            pre_rms = float(np.sqrt(np.mean(x[:, active_full] ** 2))) + 1e-8
+            post_rms = float(np.sqrt(np.mean(comp[:, active_full] ** 2))) + 1e-8
+            comp *= min(1.8, pre_rms / post_rms)
+        x = comp
+
+    # 4. Subtle stereo room/plate reverb so vocals blend into the stereo track instead of sounding pasted on
+    rev = max(0.0, min(0.7, float(reverb_amount or 0.0)))
+    if rev > 0.005:
+        ir = _stereo_vocal_ir(sr)
+        wet_l = signal.fftconvolve(x[0], ir[0], mode="full")[: x.shape[-1]]
+        wet_r = signal.fftconvolve(x[1], ir[1], mode="full")[: x.shape[-1]]
+        wet = np.stack([wet_l, wet_r], axis=0).astype(np.float32)
+        x = x + wet * rev
+
+    return torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))
 
 
 # ---------------------------------------------------------------- downloads
@@ -182,6 +349,37 @@ def _import_seed_vc():
         for name in ("dac", "dac.nn", "dac.nn.quantize"):
             sys.modules[name] = types.ModuleType(name)
         sys.modules["dac.nn.quantize"].VectorQuantize = VectorQuantize
+
+
+def _resolve_pitch_shift(voiced_ref, voiced_src, pitch_mode, pitch_shift=0.0, ref_pitch_offset=0.0):
+    """Choose semitone shift from source singing F0 to target voice F0.
+
+    In 'octave to my range' mode, only jump by +/-12 semitones when the gap is
+    genuinely near a full octave (e.g. male <-> female, |gap| >= 9.0 st) AND
+    shifting down keeps the vocal median above a clear singable floor (~115 Hz).
+    This prevents deep baritone talking references (~90 Hz) from dropping normal
+    male singing (~190-220 Hz) a full octave into slurred sub-bass rumble.
+    """
+    semitones = float(pitch_shift)
+    if pitch_mode == "keep song key" or not voiced_ref.numel() or not voiced_src.numel():
+        return semitones
+    ref_med = float(torch.median(voiced_ref).item())
+    src_med = float(torch.median(voiced_src).item())
+    if ref_med <= 0.0 or src_med <= 0.0:
+        return semitones
+    gap = 12.0 * (math.log2(ref_med) - math.log2(src_med)) + float(ref_pitch_offset)
+    if pitch_mode == "octave to my range":
+        octaves = 0
+        if gap <= -9.0:
+            octaves = int(round(gap / 12.0))
+            while octaves < 0 and (src_med * (2.0 ** octaves)) < 115.0:
+                octaves += 1
+        elif gap >= 9.0:
+            octaves = int(round(gap / 12.0))
+        semitones += 12.0 * octaves
+    else:
+        semitones += gap
+    return semitones
 
 
 # ---------------------------------------------------------------- Seed-VC
@@ -349,11 +547,7 @@ class SeedVC:
         f0_ref = torch.from_numpy(self.rmvpe.infer_from_audio(ref_16k[0], thred=0.03)).to(device)[None]
         f0_src = torch.from_numpy(self.rmvpe.infer_from_audio(src_16k[0], thred=0.03)).to(device)[None]
         voiced_ref, voiced_src = f0_ref[f0_ref > 1], f0_src[f0_src > 1]
-        semitones = float(pitch_shift)
-        if pitch_mode != "keep song key" and voiced_ref.numel() and voiced_src.numel():
-            gap = 12.0 * (torch.median(torch.log2(voiced_ref)) - torch.median(torch.log2(voiced_src))).item()
-            gap += ref_pitch_offset
-            semitones += 12.0 * round(gap / 12.0) if pitch_mode == "octave to my range" else gap
+        semitones = _resolve_pitch_shift(voiced_ref, voiced_src, pitch_mode, pitch_shift, ref_pitch_offset)
         f0_alt = f0_src.clone()
         f0_alt[f0_src > 1] = f0_src[f0_src > 1] * (2.0 ** (semitones / 12.0))
 
@@ -427,6 +621,20 @@ def _seed_vc():
     return model
 
 
+def _roformer(kind):
+    """Cached BS-RoFormer ('vocals') or Mel-Band RoFormer ('karaoke') separator."""
+    from . import roformer
+    key = f"roformer_{kind}"
+    entry = _cache.get(key)
+    device = mm.get_torch_device()
+    if entry is None:
+        model, config = roformer.load_roformer_model(kind, MODEL_DIR, device)
+        entry = _cache[key] = (model, config)
+    else:
+        entry[0].to(device)
+    return entry
+
+
 def _hdemucs():
     model = _cache.get("hdemucs")
     if model is None:
@@ -450,18 +658,17 @@ class SongVoiceSplit:
         return {"required": {
             "audio": ("AUDIO", {"tooltip": "The finished song."}),
             "segment_seconds": ("FLOAT", {"default": 10.0, "min": 4.0, "max": 30.0, "step": 1.0,
-                                          "tooltip": "Demucs works in windows this long. Lower uses less VRAM."}),
+                                          "tooltip": "Window length when falling back to Hybrid Demucs."}),
         }}
 
     RETURN_TYPES = ("AUDIO", "AUDIO")
     RETURN_NAMES = ("vocals", "instrumental")
     FUNCTION = "split"
     CATEGORY = "audio/voice"
-    DESCRIPTION = "Separate a song into lead vocals and everything else (Hybrid Demucs)."
+    DESCRIPTION = "Separate a song into vocals and instrumental (BS-RoFormer, with Hybrid Demucs fallback)."
 
     @torch.no_grad()
-    def split(self, audio, segment_seconds):
-        wave, sr = _audio_in(audio)
+    def _split_demucs(self, wave, sr, segment_seconds):
         _free_vram_for(2.0)
         device = mm.get_torch_device()
         model = _hdemucs().to(device)
@@ -501,6 +708,71 @@ class SongVoiceSplit:
         instrumental = out.sum(0) - vocals
         return (_audio_out(_resample(vocals, 44100, sr), sr),
                 _audio_out(_resample(instrumental, 44100, sr), sr))
+
+    @torch.no_grad()
+    def split(self, audio, segment_seconds=10.0, separator="roformer"):
+        wave, sr = _audio_in(audio)
+        self.last_separator = "demucs"
+        self.last_fallback_reason = ""
+        if separator == "roformer":
+            try:
+                from . import roformer
+                _free_vram_for(3.0)
+                device = mm.get_torch_device()
+                model, config = _roformer("vocals")
+                mix = _stereo(_resample(wave, sr, 44100))
+                pbar = comfy.utils.ProgressBar(100)
+                try:
+                    vocals, instrumental = roformer.separate_roformer(
+                        model, config, mix, device=device, num_overlap=2,
+                        pbar=pbar, check_cancel=mm.throw_exception_if_processing_interrupted)
+                finally:
+                    model.to("cpu")
+                    mm.soft_empty_cache()
+                self.last_separator = "roformer"
+                return (_audio_out(_resample(vocals, 44100, sr), sr),
+                        _audio_out(_resample(instrumental, 44100, sr), sr))
+            except Exception as exc:
+                # Propagate explicit user cancellations; only fall back on load/download failures.
+                if "Interrupt" in type(exc).__name__ or "Cancelled" in type(exc).__name__:
+                    raise
+                self.last_fallback_reason = str(exc)
+                print(f"[SongVoice] BS-RoFormer unavailable ({exc}); falling back to Hybrid Demucs", flush=True)
+        return self._split_demucs(wave, sr, segment_seconds)
+
+    @torch.no_grad()
+    def split_lead(self, vocals):
+        """Split a vocal stem into (lead_vocals, backing_vocals) using Mel-Band RoFormer Karaoke.
+
+        Keeping chorus harmonies and backing layers out of Seed-VC prevents the
+        monophonic pitch tracker (RMVPE) from collapsing during dense choruses.
+        """
+        wave, sr = _audio_in(vocals)
+        self.last_lead_separator = "none"
+        self.last_lead_fallback_reason = ""
+        try:
+            from . import roformer
+            _free_vram_for(3.0)
+            device = mm.get_torch_device()
+            model, config = _roformer("karaoke")
+            mix = _stereo(_resample(wave, sr, 44100))
+            pbar = comfy.utils.ProgressBar(100)
+            try:
+                lead, backing = roformer.separate_roformer(
+                    model, config, mix, device=device, num_overlap=2,
+                    pbar=pbar, check_cancel=mm.throw_exception_if_processing_interrupted)
+            finally:
+                model.to("cpu")
+                mm.soft_empty_cache()
+            self.last_lead_separator = "karaoke"
+            return (_audio_out(_resample(lead, 44100, sr), sr),
+                    _audio_out(_resample(backing, 44100, sr), sr))
+        except Exception as exc:
+            if "Interrupt" in type(exc).__name__ or "Cancelled" in type(exc).__name__:
+                raise
+            self.last_lead_fallback_reason = str(exc)
+            print(f"[SongVoice] Karaoke lead/backing split unavailable ({exc}); using full vocals", flush=True)
+            return vocals, None
 
 
 def _voice_names():
@@ -745,8 +1017,13 @@ class SongVoiceClone:
         with torch.no_grad():
             style = model.style_of(voiced[:sr * 120])
         src_mono = _resample(src.mean(0, keepdim=True), src_sr, sr)[0]
+        # Peak-normalize source vocal before Whisper/RMVPE/mel extraction so quiet
+        # stems aren't starved and loud transients never clip > 1.0; _follow_original
+        # restores the original phrasing dynamics right after conversion.
+        src_peak = float(src_mono.abs().max().item()) if src_mono.numel() else 0.0
+        src_in = (src_mono / src_peak * 0.95) if src_peak > 1e-5 else src_mono
         pbar = comfy.utils.ProgressBar(100)
-        out, semitones = model.convert(src_mono, prompt, diffusion_steps, cfg_rate, pitch_mode, pitch_shift, fp16,
+        out, semitones = model.convert(src_in, prompt, diffusion_steps, cfg_rate, pitch_mode, pitch_shift, fp16,
                                        pbar=pbar, style=style,
                                        ref_pitch_offset=TALKING_PITCH_OFFSET if my_clip_is == "talking" else 0.0)
         if not keep_loaded:
@@ -781,7 +1058,9 @@ class SongVoiceMix:
     CATEGORY = "audio/voice"
     DESCRIPTION = "Put the new vocals back on the instrumental, peak-safe."
 
-    def mix(self, vocals, instrumental, vocal_gain_db, instrumental_gain_db, instrumental_semitones):
+    def mix(self, vocals, instrumental, vocal_gain_db=0.0, instrumental_gain_db=0.0,
+            instrumental_semitones=0.0, backing_vocals=None, backing_gain_db=-1.5,
+            polish=True, reverb_amount=0.18):
         inst, sr = _audio_in(instrumental)
         voc, voc_sr = _audio_in(vocals)
         inst = _stereo(inst)
@@ -790,7 +1069,43 @@ class SongVoiceMix:
             shifted = torchaudio.functional.pitch_shift(inst, sr, n_steps=int(round(shift)))
             inst = _fit(shifted, inst.shape[-1])
         voc = _fit(_stereo(_resample(voc, voc_sr, sr)), inst.shape[-1])
+        if polish or float(reverb_amount or 0.0) > 0.005:
+            voc = _polish_vocals(voc, sr, reverb_amount=reverb_amount, eq_and_comp=bool(polish))
         out = voc * _db(vocal_gain_db) + inst * _db(instrumental_gain_db)
+        if backing_vocals is not None:
+            back, back_sr = _audio_in(backing_vocals)
+            back = _fit(_stereo(_resample(back, back_sr, sr)), inst.shape[-1])
+            if abs(shift) >= 0.01:
+                back = _fit(torchaudio.functional.pitch_shift(back, sr, n_steps=int(round(shift))), inst.shape[-1])
+            out = out + back * _db(backing_gain_db)
+        # Gentle soft-clipping bus limiter above 0.92 so single drum transients don't duck the whole mix
+        knee = 0.92
+        headroom = 0.07
+        mag = out.abs()
+        over = mag > knee
+        if over.any():
+            out = torch.where(over, out.sign() * (knee + headroom * torch.tanh((mag - knee) / headroom)), out)
+        peak = out.abs().max().item()
+        if peak > 0.99:
+            out = out * (0.99 / peak)
+        return (_audio_out(out, sr),)
+
+    def combine_vocals(self, vocals, backing_vocals=None, vocal_gain_db=0.0,
+                       backing_gain_db=-1.5, polish=True, reverb_amount=0.18,
+                       backing_semitones=0.0):
+        """Build the polished vocal stem (cloned lead + kept backing harmonies) for the Vocals-only sidecar."""
+        voc, sr = _audio_in(vocals)
+        voc = _stereo(voc)
+        if polish or float(reverb_amount or 0.0) > 0.005:
+            voc = _polish_vocals(voc, sr, reverb_amount=reverb_amount, eq_and_comp=bool(polish))
+        out = voc * _db(vocal_gain_db)
+        if backing_vocals is not None:
+            back, back_sr = _audio_in(backing_vocals)
+            back = _fit(_stereo(_resample(back, back_sr, sr)), voc.shape[-1])
+            shift = backing_semitones - 12.0 * round(backing_semitones / 12.0)
+            if abs(shift) >= 0.01:
+                back = _fit(torchaudio.functional.pitch_shift(back, sr, n_steps=int(round(shift))), voc.shape[-1])
+            out = out + back * _db(backing_gain_db)
         peak = out.abs().max().item()
         if peak > 0.99:
             out = out * (0.99 / peak)

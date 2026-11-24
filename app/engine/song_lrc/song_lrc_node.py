@@ -417,7 +417,13 @@ def parse_abc_structure(text: str, duration: float) -> list[tuple[float, float, 
         if re.match(r"^[A-Za-z]:", line):
             continue
         if "vocal" in voice.lower() or (not voice and "ins" not in voice.lower()):
-            vocal_bars += line.count("|")
+            # Count multi-bar rests (e.g. Z4| = 4 bars) as their true bar count, not 1 bar.
+            for part in re.split(r"\|+", line):
+                chunk = part.strip()
+                if not chunk:
+                    continue
+                z_full = re.match(r"^Z(\d*)$", chunk)
+                vocal_bars += int(z_full.group(1) or "1") if z_full else 1
     if vocal_bars or not chunks:
         flush()
     t = 0.0
@@ -493,36 +499,72 @@ def line_windows(lyrics: str, seconds: float, structure: str = "",
         fit = 1.0
     assigned: list[tuple[str, list[str], float, float]] = []
     if spans:
-        unused = list(spans)
-        for name, lines in blocks:
-            match_i = next((i for i, (_s, _e, n) in enumerate(unused) if n == name), None)
+        # Match lyric blocks to score spans monotonically in written order so an
+        # unmatched middle section (e.g. Chorus/Verse 2) is NEVER moved after [Outro].
+        matched: list[tuple[float, float] | None] = [None] * len(blocks)
+        cursor = 0
+        for b_idx, (name, _lines) in enumerate(blocks):
+            if cursor >= len(spans):
+                break
+            match_i = next((i for i in range(cursor, len(spans)) if spans[i][2] == name), None)
             if match_i is None and name == "bridge":
-                match_i = next((i for i, (_s, _e, n) in enumerate(unused) if n == "verse"), None)
-            if match_i is None:
-                match_i = next((i for i, (_s, _e, n) in enumerate(unused)
-                                if n not in _NON_SINGING), None)
-            if match_i is None:
-                continue
-            start, end, _n = unused.pop(match_i)
-            assigned.append((name, lines, start, end))
-        used_ids = {id(lines) for _n, lines, _s, _e in assigned}
-        leftover = [(n, l) for n, l in blocks if id(l) not in used_ids]
-        leftover_spans = [u for u in unused if u[2] not in _NON_SINGING]
-        if leftover and leftover_spans:
-            rest_start = leftover_spans[0][0]
-            rest_end = leftover_spans[-1][1]
-            rest_lines = [line for _n, lines in leftover for line in lines]
-            if rest_lines:
-                assigned.append(("verse", rest_lines, rest_start, rest_end))
-        elif leftover and assigned:
-            # Score was truncated (max_duration). Park extra lines in leftover
-            # audio after the last matched section — never in the intro.
-            last_end = assigned[-1][3]
-            rest_lines = [line for _n, lines in leftover for line in lines]
-            if rest_lines and last_end < seconds - 1.0:
-                assigned.append((leftover[0][0], rest_lines, last_end, seconds))
-            else:
-                print("[SongLRC] Dropping extra lyric sections past the audio end")
+                match_i = next((i for i in range(cursor, len(spans)) if spans[i][2] == "verse"), None)
+            if match_i is None and name not in _NON_SINGING:
+                match_i = next((i for i in range(cursor, len(spans))
+                                if spans[i][2] not in _NON_SINGING), None)
+            if match_i is not None:
+                matched[b_idx] = (spans[match_i][0], spans[match_i][1])
+                cursor = match_i + 1
+
+        def _spread_blocks(indices: list[int], t_start: float, t_end: float) -> None:
+            weights = [max(1, len(blocks[k][1])) for k in indices]
+            total_w = float(sum(weights)) or 1.0
+            pos = t_start
+            dur = max(0.25, t_end - t_start)
+            for k, w in zip(indices, weights):
+                nxt = pos + dur * (w / total_w)
+                matched[k] = (pos, nxt)
+                pos = nxt
+
+        if not any(m is not None for m in matched):
+            first_s = next((s for s, _e, n in spans if n not in _NON_SINGING), spans[0][0])
+            _spread_blocks(list(range(len(blocks))), first_s, seconds)
+        else:
+            i = 0
+            while i < len(blocks):
+                if matched[i] is not None:
+                    i += 1
+                    continue
+                j = i
+                while j < len(blocks) and matched[j] is None:
+                    j += 1
+                prev_idx = i - 1 if i > 0 and matched[i - 1] is not None else None
+                next_idx = j if j < len(blocks) and matched[j] is not None else None
+                if prev_idx is not None and next_idx is not None:
+                    gap_s, gap_e = matched[prev_idx][1], matched[next_idx][0]
+                    if gap_e - gap_s >= 1.0:
+                        _spread_blocks(list(range(i, j)), gap_s, gap_e)
+                    else:
+                        # The previous matched span covers the whole middle (e.g. a single
+                        # long 'verse' span in a rap cover): share it across prev + unmatched.
+                        _spread_blocks(list(range(prev_idx, j)), matched[prev_idx][0], gap_e)
+                elif prev_idx is not None:
+                    last_e = matched[prev_idx][1]
+                    if last_e < seconds - 1.0:
+                        _spread_blocks(list(range(i, j)), last_e, seconds)
+                    else:
+                        _spread_blocks(list(range(prev_idx, j)), matched[prev_idx][0], seconds)
+                elif next_idx is not None:
+                    next_s = matched[next_idx][0]
+                    if next_s >= 1.0:
+                        _spread_blocks(list(range(i, j)), 0.0, next_s)
+                    else:
+                        _spread_blocks(list(range(i, next_idx + 1)), 0.0, matched[next_idx][1])
+                i = j
+
+        for (name, lines), span in zip(blocks, matched):
+            if span is not None:
+                assigned.append((name, lines, span[0], span[1]))
     else:
         # Do not invent a 6% intro delay: score-editor songs often start
         # singing in the first bars, and a pad makes the LRC lag the vocal.
@@ -926,25 +968,28 @@ class SongLyricsToLRC:
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             windows = line_windows(lyrics, seconds, structure=structure)
-            display_lines = [w[0] for w in windows] or self._get_display_lines(lyrics)
+            # Always keep the song's true written lyric order; never let score-span
+            # heuristics reorder or drop lines before forced alignment.
+            display_lines = self._get_display_lines(lyrics) or [w[0] for w in windows]
             if not display_lines:
                 return None
 
             n = len(display_lines)
             sing_start = windows[0][1] if windows else 0.0
-            sing_end = windows[-1][2] if windows else seconds
+            # Never truncate WhisperX's right edge below the actual audio duration:
+            # a short or rest-heavy cover score can end earlier than the rendered vocals.
+            sing_end = seconds
             # First vocal note is a better left edge than even-section guesses.
             notes, _bpm, _end = vocal_note_spans(structure) if structure else ([], 120.0, 0.0)
             if notes:
                 fit = _fit_tempo(notes[-1][1], seconds)
                 first_v = notes[0][0] * fit
-                last_v = notes[-1][1] * fit
                 if 0.0 <= first_v < seconds:
                     sing_start = min(sing_start, first_v)
-                if last_v > sing_start:
-                    sing_end = min(seconds, max(sing_end, last_v))
+            else:
+                sing_start = 0.0
             sing_start = max(0.0, sing_start - 0.4)
-            sing_end = min(seconds, max(sing_end + 0.8, sing_start + 1.0))
+            sing_end = min(seconds, max(sing_end, sing_start + 1.0))
 
             audio = whisperx.load_audio(audio_path)
             model_a, metadata = whisperx.load_align_model(
