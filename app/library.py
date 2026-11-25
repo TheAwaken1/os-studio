@@ -1213,16 +1213,29 @@ def score_summary(abc: str) -> dict:
 
 def cover_lyrics(sections: list[dict], timed_lines=None) -> str:
     """Section tags in the score's order, filled with transcribed lines by time when given.
-    sections: [{tag, start, end}], timed_lines: [(seconds, text)]."""
+    sections: [{tag, start, end, sung?}], timed_lines: [(seconds, text)]."""
+    if not sections:
+        return ""
     timed = sorted((float(t), str(text).strip()) for t, text in (timed_lines or []) if str(text).strip())
-    blocks = []
-    for i, section in enumerate(sections):
-        start = float(section.get("start", 0))
-        end = float(section.get("end", 0)) if i < len(sections) - 1 else float("inf")
-        lines = [text for t, text in timed if start <= t < end]
-        if i == 0:
-            lines = [text for t, text in timed if t < end]     # nothing before the first section is lost
-        blocks.append("\n".join([f"[{section['tag']}]"] + lines))
+    buckets: list[list[str]] = [[] for _ in sections]
+    for t, text in timed:
+        idx = len(sections) - 1
+        for i, section in enumerate(sections):
+            start = float(section.get("start", 0))
+            end = float(section.get("end", 0)) if i < len(sections) - 1 else float("inf")
+            if (i == 0 and t < end) or (start <= t < end):
+                idx = i
+                break
+        sec = sections[idx]
+        if sec.get("sung") is False and sec.get("tag") in ("interlude", "intro"):
+            # Skip Whisper guitar-solo/intro hallucinations in unsung instrumental sections;
+            # rescue a trailing line that ended right after the previous sung section.
+            start = float(sec.get("start", 0))
+            if idx > 0 and t - start <= 1.5 and sections[idx - 1].get("sung") is not False:
+                buckets[idx - 1].append(text)
+            continue
+        buckets[idx].append(text)
+    blocks = ["\n".join([f"[{sec['tag']}]"] + lines) for sec, lines in zip(sections, buckets)]
     return "\n\n".join(blocks).strip() + "\n"
 
 

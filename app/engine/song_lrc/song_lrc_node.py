@@ -10,6 +10,8 @@ _NON_SINGING = {"intro", "silence", "interlude", "instrumental", "solo", "outro"
 _SECTION_WORDS = (
     "verse", "chorus", "bridge", "intro", "outro", "hook", "refrain",
     "pre-chorus", "prechorus", "pre chorus",
+    "post-chorus", "postchorus", "post chorus",
+    "interlude", "instrumental", "solo",
 )
 _SECTION_LINE = re.compile(
     r"^\s*[\*_~`]*\s*\[+\s*("
@@ -467,6 +469,64 @@ def parse_structure_spans(text: str, duration: float) -> list[tuple[float, float
     return merged
 
 
+def _sections_compatible(block_name: str, span_name: str) -> bool:
+    if block_name == span_name:
+        return True
+    if block_name == "bridge" and span_name == "verse":
+        return True
+    if block_name in ("interlude", "instrumental", "solo") and span_name in ("interlude", "instrumental", "solo"):
+        return True
+    return False
+
+
+def _matched_section_windows(lyrics: str, seconds: float,
+                             structure: str) -> list[tuple[str, list[str], float, float]]:
+    """Return per-section (name, lines, start, end) when an ABC score matches EVERY lyric block.
+
+    Used to anchor WhisperX alignment per section on covers so loud instruments or
+    instrumental breaks in one section cannot pull later choruses/outros off sync.
+    Returns [] whenever sections do not match 1:1 (falling back to full-span align).
+    """
+    if not structure:
+        return []
+    blocks = parse_lyric_blocks(lyrics)
+    if len(blocks) < 2:
+        return []
+    abc_spans = parse_abc_structure(structure, 1e9)
+    if not abc_spans:
+        return []
+    notes, _bpm, score_end = vocal_note_spans(structure)
+    raw_end = max(score_end, abc_spans[-1][1])
+    if raw_end < 1.0 or seconds < 1.0:
+        return []
+    ratio = seconds / raw_end
+    if not (0.84 <= ratio <= 1.16):
+        return []
+    spans = [(a * ratio, min(b * ratio, seconds), n) for a, b, n in abc_spans if a * ratio < seconds]
+    if not spans:
+        return []
+
+    cursor = 0
+    matched: list[tuple[str, list[str], float, float, int]] = []
+    for name, lines in blocks:
+        match_i = next((i for i in range(cursor, len(spans)) if _sections_compatible(name, spans[i][2])), None)
+        if match_i is None:
+            return []
+        matched.append((name, lines, spans[match_i][0], spans[match_i][1], match_i))
+        cursor = match_i + 1
+
+    out: list[tuple[str, list[str], float, float]] = []
+    for k, (name, lines, s0, s1, span_idx) in enumerate(matched):
+        # If no sung score spans remain after the last lyric block, let the final
+        # block reach the end of the audio so late closing ad-libs are never clipped.
+        if k == len(matched) - 1:
+            trailing_sung = any(spans[j][2] not in _NON_SINGING for j in range(span_idx + 1, len(spans)))
+            if not trailing_sung:
+                s1 = seconds
+        out.append((name, lines, s0, min(seconds, max(s1, s0 + 0.5))))
+    return out
+
+
 def line_windows(lyrics: str, seconds: float, structure: str = "",
                  offset: float = 0.0, scale: float = 1.0) -> list[tuple[str, float, float]]:
     """Per-line [start, end) windows. Uses SheetSage2 structure when present.
@@ -506,9 +566,7 @@ def line_windows(lyrics: str, seconds: float, structure: str = "",
         for b_idx, (name, _lines) in enumerate(blocks):
             if cursor >= len(spans):
                 break
-            match_i = next((i for i in range(cursor, len(spans)) if spans[i][2] == name), None)
-            if match_i is None and name == "bridge":
-                match_i = next((i for i in range(cursor, len(spans)) if spans[i][2] == "verse"), None)
+            match_i = next((i for i in range(cursor, len(spans)) if _sections_compatible(name, spans[i][2])), None)
             if match_i is None and name not in _NON_SINGING:
                 match_i = next((i for i in range(cursor, len(spans))
                                 if spans[i][2] not in _NON_SINGING), None)
@@ -1004,59 +1062,104 @@ class SongLyricsToLRC:
                     return_char_alignments=False,
                 )
 
-            # Align the exact supplied transcript once, then inspect the
-            # evidence for every line. Forced alignment can assign an entire
-            # unsung suffix to the final second when the render is truncated.
-            joined = " ".join(display_lines)
-            result = run_align([{
-                "start": sing_start,
-                "end": sing_end,
-                "text": joined,
-            }], "full-span")
-            evidence = _line_evidence(result, display_lines)
-            words = _word_starts(result, display_lines)
-            starts = [entry[0] for entry in evidence]
-            collapse = _collapsed_run(starts, display_lines)
-            observed = sum(start is not None for start in starts)
-            reversed_time = any(starts[i] is not None and starts[i - 1] is not None
-                                and starts[i] <= starts[i - 1]
-                                for i in range(1, len(starts)))
+            # When an ABC score matches every lyric block 1:1 (typical on covers),
+            # align each section within its score window first so loud instruments or
+            # instrumental breaks cannot pull a later chorus/outro off sync.
+            sec_windows = _matched_section_windows(lyrics, seconds, structure)
+            evidence = None
+            words = None
             trimmed = False
-
-            if collapse is not None and starts[collapse] is not None and starts[collapse] > seconds - 18:
-                # There is no credible room for the remaining lines. This is
-                # typical when max_duration cut off a YuE2 composition.
-                print(f"[SongLRC] Omitting {n - collapse} unsung/truncated lines "
-                      f"compressed at {starts[collapse]:.1f}s")
-                display_lines = display_lines[:collapse]
-                evidence = evidence[:collapse]
-                words = words[:collapse]
-                trimmed = True
-            elif collapse is not None or reversed_time or observed < len(display_lines):
-                print("[SongLRC] Full-span timing unreliable; retrying bounded line windows")
-                interval = (sing_end - sing_start) / max(n, 1)
-                pad = max(2.2, interval * 0.8)
-                segs = []
-                for i, line in enumerate(display_lines):
-                    center = sing_start + interval * (i + 0.5)
-                    segs.append({
-                        "start": max(sing_start, center - pad),
-                        "end": min(sing_end, center + pad),
-                        "text": line,
-                    })
-                result = run_align(segs, "wide-window")
-                aligned = result.get("segments") or []
-                retried = []
-                words = []
-                for i, line in enumerate(display_lines):
-                    if i < len(aligned):
-                        segment = {"segments": [aligned[i]]}
-                        retried.append(_line_evidence(segment, [line])[0])
-                        words.append(_word_starts(segment, [line])[0])
+            if sec_windows and sum(len(b[1]) for b in sec_windows) == n:
+                print(f"[SongLRC] WhisperX section-anchored on {device} ({n} lines, "
+                      f"{len(sec_windows)} sections)")
+                sec_ev = []
+                sec_words = []
+                prev_end = 0.0
+                sec_ok = True
+                for idx_s, (_b_name, b_lines, s0, s1) in enumerate(sec_windows):
+                    pad = 2.0
+                    win_s = max(prev_end, s0 - pad)
+                    win_e = seconds if idx_s == len(sec_windows) - 1 else min(seconds, s1 + pad)
+                    if win_e <= win_s + 0.4:
+                        sec_ok = False
+                        break
+                    seg_res = whisperx.align(
+                        [{"start": win_s, "end": win_e, "text": " ".join(b_lines)}],
+                        model_a, metadata, audio, device,
+                        return_char_alignments=False,
+                    )
+                    b_ev = _line_evidence(seg_res, b_lines)
+                    b_words = _word_starts(seg_res, b_lines)
+                    sec_ev.extend(b_ev)
+                    sec_words.extend(b_words)
+                    last_t = next((e[1] for e in reversed(b_ev) if e[1] is not None), None)
+                    if last_t is not None:
+                        prev_end = max(prev_end, last_t)
+                if sec_ok and len(sec_ev) == n:
+                    s_starts = [item[0] for item in sec_ev]
+                    s_rev = any(s_starts[i] is not None and s_starts[i - 1] is not None
+                                and s_starts[i] <= s_starts[i - 1]
+                                for i in range(1, len(s_starts)))
+                    s_obs = sum(t is not None for t in s_starts)
+                    if _collapsed_run(s_starts, display_lines) is None and not s_rev and s_obs >= 0.85 * n:
+                        evidence = sec_ev
+                        words = sec_words
                     else:
-                        retried.append((None, None, 0))
-                        words.append([None] * len(line.split()))
-                evidence = retried
+                        print("[SongLRC] Section-anchored timing unreliable; trying full-span")
+
+            if evidence is None:
+                # Align the exact supplied transcript once, then inspect the
+                # evidence for every line. Forced alignment can assign an entire
+                # unsung suffix to the final second when the render is truncated.
+                joined = " ".join(display_lines)
+                result = run_align([{
+                    "start": sing_start,
+                    "end": sing_end,
+                    "text": joined,
+                }], "full-span")
+                evidence = _line_evidence(result, display_lines)
+                words = _word_starts(result, display_lines)
+                starts = [entry[0] for entry in evidence]
+                collapse = _collapsed_run(starts, display_lines)
+                observed = sum(start is not None for start in starts)
+                reversed_time = any(starts[i] is not None and starts[i - 1] is not None
+                                    and starts[i] <= starts[i - 1]
+                                    for i in range(1, len(starts)))
+
+                if collapse is not None and starts[collapse] is not None and starts[collapse] > seconds - 18:
+                    # There is no credible room for the remaining lines. This is
+                    # typical when max_duration cut off a YuE2 composition.
+                    print(f"[SongLRC] Omitting {n - collapse} unsung/truncated lines "
+                          f"compressed at {starts[collapse]:.1f}s")
+                    display_lines = display_lines[:collapse]
+                    evidence = evidence[:collapse]
+                    words = words[:collapse]
+                    trimmed = True
+                elif collapse is not None or reversed_time or observed < len(display_lines):
+                    print("[SongLRC] Full-span timing unreliable; retrying bounded line windows")
+                    interval = (sing_end - sing_start) / max(n, 1)
+                    pad = max(2.2, interval * 0.8)
+                    segs = []
+                    for i, line in enumerate(display_lines):
+                        center = sing_start + interval * (i + 0.5)
+                        segs.append({
+                            "start": max(sing_start, center - pad),
+                            "end": min(sing_end, center + pad),
+                            "text": line,
+                        })
+                    result = run_align(segs, "wide-window")
+                    aligned = result.get("segments") or []
+                    retried = []
+                    words = []
+                    for i, line in enumerate(display_lines):
+                        if i < len(aligned):
+                            segment = {"segments": [aligned[i]]}
+                            retried.append(_line_evidence(segment, [line])[0])
+                            words.append(_word_starts(segment, [line])[0])
+                        else:
+                            retried.append((None, None, 0))
+                            words.append([None] * len(line.split()))
+                    evidence = retried
 
             if not display_lines or not any(item[0] is not None for item in evidence):
                 return None

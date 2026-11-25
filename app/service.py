@@ -1145,6 +1145,16 @@ def _load_sheetsage(rep):
     return _ss2
 
 
+def _is_whisper_loop_line(text: str) -> bool:
+    """Detect single-line Whisper looping hallucinations (e.g. 'no, no, no, no, no, no' or 't -t -t -t')."""
+    tokens = re.findall(r"[A-Za-z']+", str(text or "").lower())
+    if len(tokens) >= 5:
+        top = max(tokens.count(w) for w in set(tokens))
+        if top >= 5 and top / len(tokens) >= 0.8 and len(max(set(tokens), key=tokens.count)) <= 3:
+            return True
+    return False
+
+
 def _write_down_lyrics(vocals) -> list:
     """Isolated vocals -> [(seconds, line)] with Whisper; quiet stretches are skipped
     because Whisper invents words over silence ("Thanks for watching!")."""
@@ -1164,13 +1174,20 @@ def _write_down_lyrics(vocals) -> list:
     words = [(*(chunk.get("timestamp") or (None, None)), chunk.get("text") or "") for chunk in out.get("chunks") or []]
     loud = float(np.sqrt(np.mean(wave ** 2))) or 1e-6
     lines = []
+    norm_keys = []
     for end, text in library.group_words(words):
-        if _HALLUCINATIONS.match(text) or [t for _, t in lines[-2:]] == [text, text]:
+        # Clean Whisper single-letter hyphen stutters ("t -t -t -t" -> "t")
+        text = re.sub(r"\b([A-Za-z])(?:\s*-\s*\1){2,}\b", r"\1", text).strip()
+        key = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+        if not key or _HALLUCINATIONS.match(text) or _is_whisper_loop_line(text):
+            continue
+        if norm_keys[-2:] == [key, key]:
             continue                                      # a third identical line in a row is Whisper looping
         part = wave[max(0, int((end - 2.5) * 16000)):int(end * 16000) + 1]
         if part.size and float(np.sqrt(np.mean(part ** 2))) < 0.25 * loud:
             continue                                      # nobody is singing here
         lines.append((end, text))
+        norm_keys.append(key)
     return lines
 
 

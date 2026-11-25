@@ -190,6 +190,31 @@ class RoformerAndMixTests(unittest.TestCase):
             self.assertTrue(service._lrc_needs_order_repair(str(bad), lyrics, duration=15.0))
             self.assertTrue(service._lrc_needs_order_repair(str(trunc), lyrics, duration=162.0))
 
+    def test_sanitize_preserves_interlude_and_section_anchored_windows_match_cover(self):
+        raw = "[intro]\n\n[verse]\nFirst verse\n\n[interlude]\n\n[chorus]\nBig chorus\n"
+        cleaned, _title = lrc_mod.sanitize_generated_lyrics(raw)
+        self.assertIn("[interlude]", cleaned)
+        abc = (
+            "X:1\nM:4/4\nL:1/16\nQ:1/4=120\n"
+            "% intro\nV: Vocal\nZ4|\n"
+            "% verse\nV: Vocal\nC4D4E4F4|C4D4E4F4|C4D4E4F4|C4D4E4F4|\n"
+            "% interlude\nV: Vocal\nZ4|\n"
+            "% chorus\nV: Vocal\nG4A4B4c4|G4A4B4c4|G4A4B4c4|G4A4B4c4|\n"
+        )
+        # 16 bars at 120 BPM 4/4 = 32.0s total (intro 0-8, verse 8-16, interlude 16-24, chorus 24-32)
+        secs = lrc_mod._matched_section_windows(cleaned, seconds=32.0, structure=abc)
+        self.assertEqual([(n, round(s, 1), round(e, 1)) for n, _l, s, e in secs],
+                         [("verse", 8.0, 16.0), ("chorus", 24.0, 32.0)])
+        # Mismatched lyrics with extra sections fall back to [] (full-span)
+        extra = "[verse]\nA\n\n[chorus]\nB\n\n[verse]\nC\n\n[chorus]\nD\n"
+        self.assertEqual(lrc_mod._matched_section_windows(extra, seconds=32.0, structure=abc), [])
+
+    def test_whisper_loop_line_filter(self):
+        self.assertTrue(service._is_whisper_loop_line("No, no, no, no, no, no"))
+        self.assertTrue(service._is_whisper_loop_line("la la la la la la"))
+        self.assertFalse(service._is_whisper_loop_line("Yeah, yeah, yeah"))
+        self.assertFalse(service._is_whisper_loop_line("I said remember that lovin is what I got"))
+
 
 class RecloneApiAndServiceTests(unittest.TestCase):
     def test_reclone_api_validation_and_dispatch(self):

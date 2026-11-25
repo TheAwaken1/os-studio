@@ -78,6 +78,24 @@ class LyricsTests(unittest.TestCase):
         self.assertEqual(text, '[intro]\n\n[verse]\nline one\nline two\n\n[chorus]\nsing it\ntail\n')
         self.assertEqual(library.cover_lyrics(sections), '[intro]\n\n[verse]\n\n[chorus]\n')
 
+    def test_unsung_interlude_drops_hallucinations_and_rescues_boundary_tail(self):
+        sections = [
+            {'tag': 'verse', 'start': 10.0, 'end': 30.0, 'sung': True},
+            {'tag': 'interlude', 'start': 30.0, 'end': 45.0, 'sung': False},
+            {'tag': 'chorus', 'start': 45.0, 'end': 65.0, 'sung': True},
+        ]
+        timed = [
+            (15.0, 'verse line'),
+            (30.8, 'trailing verse line'),      # ended 0.8s after boundary -> rescued onto verse
+            (37.5, 'no no no no no no'),        # middle of unsung guitar solo -> dropped
+            (50.0, 'chorus hook'),
+        ]
+        text = library.cover_lyrics(sections, timed)
+        self.assertEqual(
+            text,
+            '[verse]\nverse line\ntrailing verse line\n\n[interlude]\n\n[chorus]\nchorus hook\n',
+        )
+
 
 class StorageTests(unittest.TestCase):
     def setUp(self):
