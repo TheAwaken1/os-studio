@@ -215,6 +215,26 @@ class RoformerAndMixTests(unittest.TestCase):
         self.assertFalse(service._is_whisper_loop_line("Yeah, yeah, yeah"))
         self.assertFalse(service._is_whisper_loop_line("I said remember that lovin is what I got"))
 
+    def test_write_down_lyrics_uses_batch_1_and_falls_back_on_oom(self):
+        calls = []
+        class FakeASR:
+            def __call__(self, wave, **kw):
+                calls.append(kw)
+                if kw.get("return_timestamps") == "word":
+                    raise torch.OutOfMemoryError("CUDA out of memory")
+                return {"chunks": [{"timestamp": (0.0, 2.0), "text": "Hello world from low VRAM"}]}
+
+        vocals = {"waveform": torch.ones(1, 2, 32000) * 0.5, "sample_rate": 16000}
+        fake_tf = SimpleNamespace(pipeline=lambda *a, **kw: FakeASR())
+        with patch.dict(sys.modules, {"transformers": fake_tf}), patch.object(service, "_flush"):
+            out = service._write_down_lyrics(vocals)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["batch_size"], 1)
+        self.assertEqual(calls[0]["return_timestamps"], "word")
+        self.assertEqual(calls[1]["batch_size"], 1)
+        self.assertIs(calls[1]["return_timestamps"], True)
+        self.assertEqual(out, [(2.0, "Hello world from low VRAM")])
+
 
 class RecloneApiAndServiceTests(unittest.TestCase):
     def test_reclone_api_validation_and_dispatch(self):

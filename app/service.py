@@ -248,6 +248,28 @@ def _release_after_cancel(exc: BaseException) -> None:
     print(f"[studio] cancelled — graphics card released ({_free_gb():.1f} GiB free)", flush=True)
 
 
+def _release_after_oom(exc: BaseException) -> None:
+    """When CUDA runs out of memory, clear traceback frames holding half-loaded models
+    and unload every model so VRAM is returned immediately instead of staying leaked."""
+    if not ("out of memory" in str(exc).lower() or type(exc).__name__ == "OutOfMemoryError"):
+        return
+    import comfy.model_management as mm
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        traceback.clear_frames(cur.__traceback__)
+        cur = cur.__context__
+    for release in (_drop_lyrics_model, _drop_sheetsage, _drop_yue2, _drop_native, _park_voice_models,
+                    mm.unload_all_models, mm.cleanup_models, mm.soft_empty_cache):
+        try:
+            release()
+        except Exception:
+            pass
+    _flush()
+    print(f"[studio] released GPU memory after OOM ({_free_gb():.1f} GiB free)", flush=True)
+
+
 # ------------------------------------------------------------------ VRAM
 def _free_gb() -> float:
     import torch
@@ -469,6 +491,7 @@ def write_lyrics(idea: str, on_text=None, writer: str = "", structure=None, line
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
 
 
@@ -524,6 +547,7 @@ def write_style(idea: str, engine: str = "yue2", writer: str = "") -> dict:
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
 
 
@@ -1104,6 +1128,7 @@ def make_song(lyrics: str, style: str, seed=None, cot: str = "off",
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
         finally:
             _flush()
@@ -1164,18 +1189,38 @@ def _write_down_lyrics(vocals) -> list:
     from transformers import pipeline
     wave = vocals["waveform"][0].float().mean(dim=0)
     wave = torchaudio.functional.resample(wave, vocals["sample_rate"], 16000).numpy()
-    asr = pipeline("automatic-speech-recognition", model=WHISPER_ID, device=0, torch_dtype=torch.float16)
+    asr = pipeline("automatic-speech-recognition", model=WHISPER_ID, device=0, dtype=torch.float16)
+    word_level = True
     try:
-        out = asr(wave.copy(), chunk_length_s=30, batch_size=4, return_timestamps="word",
-                  generate_kwargs={"task": "transcribe"})
+        try:
+            # batch_size=1 keeps Whisper word-timestamp eager attention memory under ~4 GiB
+            # (batch_size=4 allocates ~10 GiB of attention matrices and OOMs on 8-12 GB cards).
+            out = asr(wave.copy(), chunk_length_s=30, batch_size=1, return_timestamps="word",
+                      generate_kwargs={"task": "transcribe"})
+        except torch.OutOfMemoryError as oom:
+            traceback.clear_frames(oom.__traceback__)
+            _flush()
+            word_level = False
+            print("[studio] Whisper word-level timestamps ran low on VRAM; retrying with chunk timestamps", flush=True)
+            out = asr(wave.copy(), chunk_length_s=30, batch_size=1, return_timestamps=True,
+                      generate_kwargs={"task": "transcribe"})
     finally:
         del asr
         _flush()
-    words = [(*(chunk.get("timestamp") or (None, None)), chunk.get("text") or "") for chunk in out.get("chunks") or []]
+    if word_level:
+        words = [(*(chunk.get("timestamp") or (None, None)), chunk.get("text") or "") for chunk in out.get("chunks") or []]
+        raw_lines = library.group_words(words)
+    else:
+        raw_lines = []
+        for chunk in out.get("chunks") or []:
+            start, end = chunk.get("timestamp") or (None, None)
+            txt = (chunk.get("text") or "").strip()
+            if txt and (end is not None or start is not None):
+                raw_lines.append((float(end if end is not None else start), txt))
     loud = float(np.sqrt(np.mean(wave ** 2))) or 1e-6
     lines = []
     norm_keys = []
-    for end, text in library.group_words(words):
+    for end, text in raw_lines:
         # Clean Whisper single-letter hyphen stutters ("t -t -t -t" -> "t")
         text = re.sub(r"\b([A-Za-z])(?:\s*-\s*\1){2,}\b", r"\1", text).strip()
         key = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
@@ -1256,6 +1301,7 @@ def analyze_cover(audio_path: str, name: str, lyrics: str = "transcribe", song_i
                     _park_voice_models()
                     _check()
                     rep.start("words")
+                    _make_room(5.0, keep="cover")
                     timed = _write_down_lyrics(vocals)
                     _check()
                     words = library.cover_lyrics(sections, timed) if timed else library.cover_lyrics(sections)
@@ -1285,6 +1331,7 @@ def analyze_cover(audio_path: str, name: str, lyrics: str = "transcribe", song_i
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
         finally:
             _flush()
@@ -1334,6 +1381,7 @@ def split_song(sid: str) -> dict:
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
         finally:
             _flush()
@@ -1490,6 +1538,7 @@ def reclone_song(sid: str, voice: str, voice_settings: dict | None = None) -> di
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
         finally:
             _flush()
@@ -1550,6 +1599,7 @@ def train_voice(clip_path: str, voice_name: str, retrain: bool = False,
                 _release_after_cancel(exc)
                 raise Cancelled("Cancelled") from None
             traceback.print_exc()
+            _release_after_oom(exc)
             raise
         finally:
             _flush()
